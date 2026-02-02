@@ -1,6 +1,6 @@
 import { Activity } from "../types";
 
-const STORAGE_KEY = 'mdj_activities_db_v2';
+const STORAGE_KEY = 'mdj_activities_db_v4';
 
 /**
  * Service Layer for Activity Data.

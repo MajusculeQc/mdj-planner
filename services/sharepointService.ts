@@ -2,70 +2,87 @@ import { Client } from "@microsoft/microsoft-graph-client";
 import { PublicClientApplication } from "@azure/msal-browser";
 import { Activity } from "../types";
 
-// CONFIGURATION AZURE - IDs Fournis par l'utilisateur
+/**
+ * CONFIGURATION MSAL (AUTHENTIFICATION)
+ */
 const MSAL_CONFIG = {
   auth: {
-    clientId: "e74166aa-73fd-4f74-9689-a71b58fc23a6", // ID de l'application
-    authority: "https://login.microsoftonline.com/e0dd87f7-e6e3-4a48-83b2-64415a9bc105", // ID de l'annuaire (Tenant)
-    redirectUri: window.location.origin, // Doit correspondre exactement à l'URI configurée dans Azure
+    clientId: "e74166aa-73fd-4f74-9689-a71b58fc23a6", 
+    // Utilisation de 'organizations' pour le support multi-tenant / single tenant correct
+    authority: "https://login.microsoftonline.com/organizations",
+    redirectUri: window.location.origin, // C'est cette URL qui doit être dans Azure
   },
   cache: {
-    cacheLocation: "sessionStorage", 
+    cacheLocation: "localStorage",
     storeAuthStateInCookie: false,
   }
 };
 
-// ⚠️ À REMPLIR PLUS TARD AVEC LES INFOS SHAREPOINT
-// Utilisez Graph Explorer (developer.microsoft.com/graph/graph-explorer) pour trouver ces IDs
-// Requete: https://graph.microsoft.com/v1.0/sites?search=VOTRE_NOM_DE_SITE
-const SP_CONFIG = {
-  // Remplacer par l'ID réel du site SharePoint après l'avoir trouvé
-  siteId: "A_REMPLIR_SITE_ID", 
-  // Remplacer par l'ID réel de la liste 'MDJ_Activites'
-  listId: "A_REMPLIR_LIST_ID"  
-};
+const SCOPES = [
+  "https://graph.microsoft.com/User.Read", 
+  "https://graph.microsoft.com/Sites.ReadWrite.All"
+];
 
-const msalInstance = new PublicClientApplication(MSAL_CONFIG);
+// Variable pour stocker l'instance MSAL (initialisée uniquement à la demande)
+let msalInstance: PublicClientApplication | null = null;
 
-// Initialisation asynchrone requise par MSAL v3
-let isMsalInitialized = false;
-const initializeMsal = async () => {
-  if (!isMsalInitialized) {
-    await msalInstance.initialize();
-    isMsalInitialized = true;
+// Stockage de la config SharePoint dans le navigateur
+const CONFIG_KEY = 'mdj_sp_config_v1';
+
+interface SPConfig {
+  siteId: string;
+  listId: string;
+  siteName: string;
+}
+
+/**
+ * Initialise MSAL uniquement quand nécessaire.
+ */
+const getMsalInstance = async () => {
+  if (!msalInstance) {
+    try {
+      console.log("🔐 Initialisation MSAL avec Redirect URI:", window.location.origin);
+      msalInstance = new PublicClientApplication(MSAL_CONFIG);
+      await msalInstance.initialize();
+    } catch (error) {
+      console.error("Erreur critique initialisation MSAL:", error);
+      throw new Error("Impossible d'initialiser le module de sécurité Microsoft.");
+    }
   }
+  return msalInstance;
 };
 
 const getAuthToken = async (): Promise<string> => {
-  await initializeMsal();
-  
-  // Tente de récupérer le compte actif
-  let account = msalInstance.getAllAccounts()[0];
+  const msal = await getMsalInstance();
+  let account = msal.getActiveAccount();
   
   if (!account) {
-    // Si pas de compte, on déclenche le login
-    await msalInstance.loginPopup({
-        scopes: ["Sites.ReadWrite.All", "User.Read"]
-    });
-    account = msalInstance.getAllAccounts()[0];
+    const accounts = msal.getAllAccounts();
+    if (accounts.length > 0) {
+      msal.setActiveAccount(accounts[0]);
+      account = accounts[0];
+    }
   }
 
-  const request = {
-    scopes: ["Sites.ReadWrite.All"],
-    account: account
-  };
+  if (!account) {
+    throw new Error("Utilisateur non connecté.");
+  }
+
+  const request = { scopes: SCOPES, account: account };
 
   try {
-    const response = await msalInstance.acquireTokenSilent(request);
+    const response = await msal.acquireTokenSilent(request);
     return response.accessToken;
   } catch (e) {
-    const response = await msalInstance.acquireTokenPopup(request);
+    const response = await msal.acquireTokenPopup(request);
     return response.accessToken;
   }
 };
 
 const getGraphClient = async () => {
   const token = await getAuthToken();
+  if (!Client) throw new Error("La librairie Graph Client n'est pas chargée.");
+  
   return Client.init({
     authProvider: (done) => {
       done(null, token);
@@ -75,40 +92,125 @@ const getGraphClient = async () => {
 
 export const SharePointService = {
   
-  // Login manuel
+  // --- AUTHENTIFICATION ---
+
   login: async () => {
-    await initializeMsal();
     try {
-        await msalInstance.loginPopup({
-            scopes: ["Sites.ReadWrite.All", "User.Read"]
-        });
-        return msalInstance.getAllAccounts()[0];
-    } catch (e) {
+        const msal = await getMsalInstance();
+        const response = await msal.loginPopup({ scopes: SCOPES });
+        msal.setActiveAccount(response.account);
+        return response.account;
+    } catch (e: any) {
         console.error("Login failed", e);
+        
+        // Gestion des erreurs courantes Azure avec instructions claires
+        if (e.message && e.message.includes("AADSTS500113")) {
+            const currentUrl = window.location.origin;
+            alert(`⚠️ ACTION REQUISE (AADSTS500113)\n\nL'adresse "${currentUrl}" n'est pas enregistrée dans Azure.\n\nPROCÉDURE :\n1. Copiez cette adresse : ${currentUrl}\n2. Allez sur le Portail Azure > App Registrations > MDJ PLANNER\n3. Allez dans Authentication > Single-page application\n4. Ajoutez l'URI et sauvegardez.`);
+        } else if (e.message && e.message.includes("AADSTS50194")) {
+            alert("ERREUR CONFIG (Multi-tenant): L'application Azure n'accepte pas les comptes personnels ou externes. Assurez-vous d'utiliser un compte professionnel Office 365 lié au tenant.");
+        } else if (e.message && e.message.includes("AADSTS650053")) {
+             alert("ERREUR PERMISSIONS: L'application demande des permissions refusées. Vérifiez 'Sites.ReadWrite.All' dans le portail Azure.");
+        }
         throw e;
     }
   },
 
   getUser: async () => {
-    await initializeMsal();
-    return msalInstance.getAllAccounts()[0];
+    try {
+        if (!msalInstance) return null; 
+        return msalInstance.getActiveAccount();
+    } catch (e) {
+        return null;
+    }
   },
 
-  getAll: async (): Promise<Activity[]> => {
-    if (SP_CONFIG.siteId === "A_REMPLIR_SITE_ID") {
-        console.warn("⚠️ SharePoint non configuré : IDs manquants. Retour tableau vide.");
-        return [];
+  logout: async () => {
+    const msal = await getMsalInstance();
+    await msal.logoutPopup();
+    localStorage.removeItem(CONFIG_KEY);
+  },
+
+  // --- CONFIGURATION AUTOMATIQUE ---
+
+  autoConfigure: async (siteKeyword: string): Promise<boolean> => {
+    try {
+      const client = await getGraphClient();
+      console.log(`🔍 Recherche du site contenant: "${siteKeyword}"...`);
+
+      // 1. Trouver le site
+      const siteSearch = await client.api(`/sites?search=${siteKeyword}`).get();
+      if (!siteSearch.value || siteSearch.value.length === 0) {
+        alert(`Aucun site SharePoint trouvé avec le mot clé "${siteKeyword}". Vérifiez le nom exact (ex: "Direction", "Intranet").`);
+        return false;
+      }
+      
+      const site = siteSearch.value[0];
+      const siteId = site.id;
+      console.log(`✅ Site trouvé: ${site.name} (${siteId})`);
+
+      // 2. Chercher la liste "MDJ_Activites"
+      let listId = "";
+      try {
+        const lists = await client.api(`/sites/${siteId}/lists`).filter("displayName eq 'MDJ_Activites'").get();
+        if (lists.value && lists.value.length > 0) {
+          listId = lists.value[0].id;
+          console.log(`✅ Liste existante trouvée: ${listId}`);
+        }
+      } catch (e) {
+        console.warn("Erreur recherche liste", e);
+      }
+
+      // 3. Créer la liste si elle n'existe pas
+      if (!listId) {
+        console.log("⚠️ Liste non trouvée. Création automatique...");
+        const newList = await client.api(`/sites/${siteId}/lists`).post({
+          displayName: "MDJ_Activites",
+          columns: [
+            { name: "Title", text: {} },
+            { name: "ActivityDate", dateTime: {} },
+            { name: "JSON_Data", text: { allowMultipleLines: true, appendChangesToExistingText: false } }
+          ],
+          list: { template: "genericList" }
+        });
+        listId = newList.id;
+        console.log(`🎉 Liste créée avec succès: ${listId}`);
+      }
+
+      // 4. Sauvegarder la config
+      const config: SPConfig = { siteId, listId, siteName: site.name };
+      localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+      return true;
+
+    } catch (error) {
+      console.error("Erreur Auto-Config:", error);
+      alert("Erreur lors de la configuration automatique. Assurez-vous d'être administrateur du site SharePoint.");
+      return false;
     }
+  },
+
+  getConfig: (): SPConfig | null => {
+    const data = localStorage.getItem(CONFIG_KEY);
+    return data ? JSON.parse(data) : null;
+  },
+
+  // --- CRUD OPERATIONS ---
+
+  getAll: async (): Promise<Activity[]> => {
+    const config = SharePointService.getConfig();
+    if (!config) return []; 
 
     try {
       const client = await getGraphClient();
       const response = await client
-        .api(`/sites/${SP_CONFIG.siteId}/lists/${SP_CONFIG.listId}/items`)
+        .api(`/sites/${config.siteId}/lists/${config.listId}/items`)
         .expand('fields(select=Title,JSON_Data,id)') 
+        .top(499)
         .get();
 
       return response.value.map((item: any) => {
         try {
+          if (!item.fields.JSON_Data) return null;
           const data = JSON.parse(item.fields.JSON_Data);
           return { ...data, sharepointId: item.id };
         } catch (e) {
@@ -117,21 +219,19 @@ export const SharePointService = {
       }).filter((a: any) => a !== null);
     } catch (error) {
       console.error("Erreur SharePoint GET:", error);
-      throw error;
+      throw error; 
     }
   },
 
   save: async (activity: Activity): Promise<void> => {
-    if (SP_CONFIG.siteId === "A_REMPLIR_SITE_ID") {
-        alert("Configuration SharePoint incomplète. Impossible de sauvegarder dans le cloud pour l'instant.");
-        return;
-    }
+    const config = SharePointService.getConfig();
+    if (!config) throw new Error("SharePoint non configuré.");
 
     const client = await getGraphClient();
     const listItem = {
       fields: {
         Title: activity.title,
-        ActivityDate: activity.date, // Assurez-vous que cette colonne existe dans SP ou retirez cette ligne
+        ActivityDate: activity.date,
         JSON_Data: JSON.stringify(activity)
       }
     };
@@ -140,12 +240,13 @@ export const SharePointService = {
       if ((activity as any).sharepointId) {
         const spId = (activity as any).sharepointId;
         await client
-          .api(`/sites/${SP_CONFIG.siteId}/lists/${SP_CONFIG.listId}/items/${spId}`)
+          .api(`/sites/${config.siteId}/lists/${config.listId}/items/${spId}`)
           .patch(listItem);
       } else {
-        await client
-          .api(`/sites/${SP_CONFIG.siteId}/lists/${SP_CONFIG.listId}/items`)
+        const res = await client
+          .api(`/sites/${config.siteId}/lists/${config.listId}/items`)
           .post(listItem);
+        (activity as any).sharepointId = res.id;
       }
     } catch (error) {
       console.error("Erreur SharePoint SAVE:", error);
@@ -153,8 +254,19 @@ export const SharePointService = {
     }
   },
   
+  delete: async (id: string, sharepointId?: string): Promise<void> => {
+      const config = SharePointService.getConfig();
+      if (!config || !sharepointId) return;
+
+      try {
+          const client = await getGraphClient();
+          await client.api(`/sites/${config.siteId}/lists/${config.listId}/items/${sharepointId}`).delete();
+      } catch (e) {
+          console.error("Delete failed", e);
+      }
+  },
+
   reset: async () => {
-      // Pas d'action reset globale sur SharePoint pour sécurité
-      console.log("Reset non supporté sur SharePoint par sécurité");
+      alert("Impossible de réinitialiser toute la base de données SharePoint depuis ici par sécurité.");
   }
 };

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Activity, ActivityType, Material } from '../types';
-import { X, Wand2, CheckSquare, MapPin, Truck, ShieldAlert, DollarSign, Users, Save, CheckCircle, Circle, LayoutDashboard, BrainCircuit, Hand, Clock, Timer, Phone, Link as LinkIcon, FileText, Gavel } from 'lucide-react';
+import { HtmlGeneratorService } from '../services/htmlGeneratorService';
+import { X, Wand2, CheckSquare, MapPin, Truck, ShieldAlert, DollarSign, Users, Save, CheckCircle, Circle, LayoutDashboard, BrainCircuit, Hand, Clock, Timer, Phone, Link as LinkIcon, FileText, Gavel, PlusCircle, Sparkles, Printer } from 'lucide-react';
 
 interface Props {
   activity: Activity;
@@ -10,9 +11,123 @@ interface Props {
 
 const STAFF_LIST = ["Sébastien Johnson", "Laurie Bray Pratte", "Charles Frenette", "Mikael Delage", "Patrick Delage", "Ann-Sushi (Stagiaire)"];
 
+// --- BANQUE DE SUGGESTIONS PAR DÉFAUT ---
+const SUGGESTIONS: Record<string, string[]> = {
+  objectives: [
+    "Développer l'esprit critique",
+    "Favoriser l'autonomie",
+    "Créer des liens significatifs",
+    "Saines habitudes de vie",
+    "Estime de soi",
+    "Ouverture sur la communauté",
+    "Gestion des émotions"
+  ],
+  tasks: [
+    "Préparation de la salle",
+    "Accueil des participants",
+    "Animation d'un segment",
+    "Responsable de la musique",
+    "Prise de photos",
+    "Nettoyage et rangement",
+    "Gestion des collations"
+  ],
+  evaluation: [
+    "Niveau de participation active",
+    "Respect des consignes de sécurité",
+    "Qualité des interactions (climat)",
+    "Plaisir exprimé par les jeunes",
+    "Atteinte des objectifs pédagogiques",
+    "Gestion des conflits"
+  ],
+  materials: [
+    "Trousse de premiers soins",
+    "Bouteilles d'eau",
+    "Dossards",
+    "Système de son",
+    "Collations / Repas",
+    "Tablettes/Caméra",
+    "Jeux de société",
+    "Matériel d'art"
+  ],
+  hazards: [
+    "Chute ou glissade",
+    "Blessure sportive",
+    "Conflit entre jeunes",
+    "Rejet ou intimidation",
+    "Réaction allergique",
+    "Coupure ou brûlure",
+    "Égarement (Sortie)",
+    "Météo défavorable"
+  ],
+  protocols: [
+    "Dénombrement régulier",
+    "Cellulaire d'urgence chargé",
+    "Vérification des antécédents médicaux",
+    "Respect du Code de vie",
+    "Port de l'équipement de sécurité",
+    "Système de jumelage (Buddy system)"
+  ],
+  compliance: [
+    "Formulaire de consentement signé",
+    "Fiche santé à jour",
+    "Décharge de responsabilité du lieu",
+    "Permis de conduire vérifié"
+  ],
+  siteRules: [
+    "Interdiction de fumer/voter",
+    "Respect du matériel du lieu",
+    "Politesse envers le personnel",
+    "Pas de flânage dans les corridors"
+  ],
+  budget: [
+    "Transport (Autobus/Essence)",
+    "Billets d'admission",
+    "Épicerie / Repas",
+    "Matériel d'animation",
+    "Honoraires intervenant externe",
+    "Location de salle"
+  ],
+  qualifications: [
+    "Secourisme RCR à jour",
+    "Permis de conduire classe 4B",
+    "Carte de sauveteur",
+    "Formation DAFA",
+    "Expérience en intervention plein air"
+  ]
+};
+
+// Liste combinée par défaut pour le personnel de soutien (Employés + Rôles génériques)
+const DEFAULT_SUPPORT_STAFF = [
+  ...STAFF_LIST,
+  "Stagiaire", 
+  "Bénévole", 
+  "Parent-Accompagnateur", 
+  "Coordonnateur", 
+  "Intervenant externe"
+];
+
 const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, onSave }) => {
   const [activity, setActivity] = useState<Activity>(initialActivity);
   const [activeTab, setActiveTab] = useState<'checklist' | 'pedagogy' | 'logistics' | 'materials' | 'risk' | 'staff' | 'budget'>('checklist');
+
+  // État global pour toutes les suggestions personnalisées
+  const [customSuggestions, setCustomSuggestions] = useState<Record<string, string[]>>({});
+
+  // Chargement des suggestions personnalisées au démarrage
+  useEffect(() => {
+    const loaded: Record<string, string[]> = {};
+    const keys = [...Object.keys(SUGGESTIONS), 'supportStaff'];
+    
+    keys.forEach(key => {
+      try {
+        const saved = localStorage.getItem(`mdj_custom_${key}`);
+        loaded[key] = saved ? JSON.parse(saved) : [];
+      } catch (e) {
+        loaded[key] = [];
+      }
+    });
+    setCustomSuggestions(loaded);
+  }, []);
 
   // Calculate score dynamically based on RMJQ standards
   const calculateReadiness = () => {
@@ -61,9 +176,90 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
     setActivity(prev => ({ ...prev, preparationScore: readiness.percentage }));
   }, [JSON.stringify(activity)]);
 
+  // --- LOGIQUE DE SAUVEGARDE GÉNÉRALISÉE ---
+  const updateCustomList = (key: string, currentValues: string[], defaultValues: string[]) => {
+    const existingCustom = customSuggestions[key] || [];
+    // Filtrer: non vide, pas dans les défauts, pas déjà dans custom
+    const newValues = currentValues
+      .map(v => v ? v.trim() : "")
+      .filter(v => v !== "" && !defaultValues.includes(v) && !existingCustom.includes(v));
+    
+    if (newValues.length > 0) {
+      const updated = [...existingCustom, ...newValues];
+      setCustomSuggestions(prev => ({ ...prev, [key]: updated }));
+      try {
+        localStorage.setItem(`mdj_custom_${key}`, JSON.stringify(updated));
+      } catch (e) {
+        console.error(`Erreur sauvegarde custom ${key}`, e);
+      }
+    }
+  };
+
+  const handleSaveInternal = () => {
+      // 1. Support Staff
+      updateCustomList('supportStaff', activity.staffing.supportStaff, DEFAULT_SUPPORT_STAFF);
+
+      // 2. Objectifs
+      updateCustomList('objectives', activity.objectives, SUGGESTIONS.objectives);
+
+      // 3. Tâches Jeunes
+      updateCustomList('tasks', activity.youthInvolvement.tasks || [], SUGGESTIONS.tasks);
+
+      // 4. Évaluation
+      updateCustomList('evaluation', activity.evaluationCriteria || [], SUGGESTIONS.evaluation);
+
+      // 5. Matériel (items)
+      updateCustomList('materials', activity.materials.map(m => m.item), SUGGESTIONS.materials);
+
+      // 6. Risques (Hazards)
+      updateCustomList('hazards', activity.riskManagement.hazards, SUGGESTIONS.hazards);
+
+      // 7. Protocoles
+      updateCustomList('protocols', activity.riskManagement.safetyProtocols, SUGGESTIONS.protocols);
+
+      // 8. Règlements Site
+      updateCustomList('siteRules', activity.riskManagement.siteRules || [], SUGGESTIONS.siteRules);
+
+      // 9. Conformité
+      updateCustomList('compliance', activity.riskManagement.complianceRequirements || [], SUGGESTIONS.compliance);
+
+      // 10. Budget (descriptions)
+      updateCustomList('budget', activity.budget.items.map(i => i.description), SUGGESTIONS.budget);
+
+      // 11. Qualifications (split string)
+      const qualifs = activity.staffing.specialQualifications 
+          ? activity.staffing.specialQualifications.split(',').map(s => s.trim()) 
+          : [];
+      updateCustomList('qualifications', qualifs, SUGGESTIONS.qualifications);
+
+      onSave(activity);
+  };
+
+  // Helper pour combiner les listes par défaut et personnalisées dans l'affichage
+  const getCombinedList = (key: string, defaultList: string[]) => {
+      const custom = customSuggestions[key] || [];
+      // Set pour dédupliquer visuellement
+      return Array.from(new Set([...defaultList, ...custom]));
+  };
+
   // --- UI HELPERS ---
   const inputClass = "w-full bg-mdj-black border border-white/10 rounded-lg p-2 text-white focus:ring-1 focus:ring-mdj-cyan focus:border-mdj-cyan placeholder-gray-600 transition-all";
   const labelClass = "text-xs font-bold text-mdj-cyan uppercase tracking-wider mb-1 block";
+
+  // Composant interne pour les suggestions
+  const QuickSuggestions = ({ list, onSelect, colorClass = "bg-white/5 text-gray-400 hover:text-white border-white/10" }: { list: string[], onSelect: (val: string) => void, colorClass?: string }) => (
+    <div className="flex flex-wrap gap-2 mb-3">
+        {list.map((item, i) => (
+            <button
+                key={i}
+                onClick={() => onSelect(item)}
+                className={`text-[10px] px-2 py-1 rounded-full border transition-all hover:scale-105 flex items-center gap-1 ${colorClass}`}
+            >
+                <PlusCircle className="w-3 h-3" /> {item}
+            </button>
+        ))}
+    </div>
+  );
 
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 p-4 overflow-y-auto">
@@ -237,14 +433,19 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                   {/* Objectifs RMJQ */}
-                  <div className="bg-mdj-black/30 rounded-2xl border border-white/10 shadow-sm overflow-hidden">
+                  <div className="bg-mdj-black/30 rounded-2xl border border-white/10 shadow-sm overflow-hidden flex flex-col">
                     <div className="bg-white/5 px-6 py-4 border-b border-white/10">
                       <h3 className="font-bold text-white flex items-center gap-2">
                         <BrainCircuit className="w-5 h-5 text-mdj-magenta"/> Objectifs Pédagogiques
                       </h3>
                       <p className="text-xs text-gray-500 mt-1">Viser : Critique, Actif, Responsable</p>
                     </div>
-                    <div className="p-6 space-y-3">
+                    <div className="p-6 space-y-3 flex-1">
+                      <QuickSuggestions 
+                        list={getCombinedList('objectives', SUGGESTIONS.objectives)} 
+                        onSelect={(val) => setActivity({...activity, objectives: [...activity.objectives, val]})} 
+                        colorClass="bg-mdj-magenta/10 text-mdj-magenta border-mdj-magenta/30 hover:bg-mdj-magenta hover:text-black"
+                      />
                       {activity.objectives.map((obj, i) => (
                         <div key={i} className="flex gap-2 items-start">
                           <div className="mt-2 w-1.5 h-1.5 rounded-full bg-mdj-magenta shrink-0 shadow-[0_0_5px_#FF00FF]"></div>
@@ -265,20 +466,22 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                       ))}
                       <button 
                         onClick={() => setActivity({...activity, objectives: [...activity.objectives, ""]})}
-                        className="text-sm text-mdj-magenta font-medium hover:underline mt-2 inline-block hover:text-white transition-colors"
-                      >+ Ajouter un objectif</button>
+                        className="text-sm text-mdj-magenta font-medium hover:underline mt-2 inline-flex items-center gap-1 hover:text-white transition-colors"
+                      >
+                         <PlusCircle className="w-3 h-3"/> Ajouter manuellement
+                      </button>
                     </div>
                   </div>
 
                   {/* Par et Pour les jeunes */}
-                  <div className="bg-mdj-black/30 rounded-2xl border border-white/10 shadow-sm overflow-hidden">
+                  <div className="bg-mdj-black/30 rounded-2xl border border-white/10 shadow-sm overflow-hidden flex flex-col">
                     <div className="bg-white/5 px-6 py-4 border-b border-white/10">
                       <h3 className="font-bold text-white flex items-center gap-2">
                         <Hand className="w-5 h-5 text-mdj-cyan"/> Implication des Jeunes
                       </h3>
                       <p className="text-xs text-mdj-cyan/80 mt-1">Approche "Par et Pour"</p>
                     </div>
-                    <div className="p-6 space-y-4">
+                    <div className="p-6 space-y-4 flex-1">
                       <div>
                         <label className={labelClass}>Niveau d'implication</label>
                         <select 
@@ -294,28 +497,42 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                       </div>
                       <div>
                         <label className={labelClass}>Tâches déléguées aux jeunes</label>
-                        <ul className="space-y-2">
+                        <QuickSuggestions 
+                            list={getCombinedList('tasks', SUGGESTIONS.tasks)}
+                            onSelect={(val) => {
+                                const currentTasks = activity.youthInvolvement?.tasks || [];
+                                setActivity({...activity, youthInvolvement: { ...activity.youthInvolvement, tasks: [...currentTasks, val] }});
+                            }}
+                            colorClass="bg-mdj-cyan/10 text-mdj-cyan border-mdj-cyan/30 hover:bg-mdj-cyan hover:text-black"
+                        />
+                        <div className="space-y-2">
                           {(activity.youthInvolvement?.tasks || []).map((task, i) => (
-                            <li key={i} className="flex gap-2 text-sm text-gray-300 bg-white/5 border border-white/5 p-2 rounded-lg">
-                              <span className="text-mdj-cyan">•</span> {task}
-                              <button className="ml-auto text-gray-500 hover:text-red-500" onClick={() => {
+                            <div key={i} className="flex gap-2 items-center">
+                              <span className="text-mdj-cyan">•</span> 
+                              <input
+                                className="flex-1 bg-transparent border-b border-white/10 focus:border-mdj-cyan focus:ring-0 p-1 text-sm text-gray-300 focus:text-white transition-colors"
+                                value={task}
+                                onChange={(e) => {
+                                    const newTasks = [...(activity.youthInvolvement?.tasks || [])];
+                                    newTasks[i] = e.target.value;
+                                    setActivity({...activity, youthInvolvement: {...activity.youthInvolvement, tasks: newTasks}});
+                                }}
+                              />
+                              <button className="text-gray-500 hover:text-red-500" onClick={() => {
                                 const newTasks = activity.youthInvolvement.tasks.filter((_, idx) => idx !== i);
                                 setActivity({...activity, youthInvolvement: {...activity.youthInvolvement, tasks: newTasks}});
                               }}><X className="w-3 h-3"/></button>
-                            </li>
+                            </div>
                           ))}
-                        </ul>
+                        </div>
                         <button 
                           onClick={() => {
-                            const val = prompt("Nouvelle tâche pour les jeunes:");
-                            if (val) {
-                              const currentTasks = activity.youthInvolvement?.tasks || [];
-                              setActivity({...activity, youthInvolvement: { ...activity.youthInvolvement, tasks: [...currentTasks, val] }});
-                            }
+                            const currentTasks = activity.youthInvolvement?.tasks || [];
+                            setActivity({...activity, youthInvolvement: { ...activity.youthInvolvement, tasks: [...currentTasks, ""] }});
                           }}
-                          className="text-xs bg-mdj-cyan/20 text-mdj-cyan px-3 py-1.5 rounded-full mt-3 hover:bg-mdj-cyan hover:text-black transition-all font-bold"
+                          className="text-xs text-mdj-cyan font-bold hover:underline mt-3 block"
                         >
-                          + Ajouter une responsabilité
+                          + Ajouter manuellement
                         </button>
                       </div>
                     </div>
@@ -326,6 +543,13 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                 <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm">
                   <label className="block text-sm font-bold text-white mb-2">Critères d'évaluation (Bilan)</label>
                   <p className="text-xs text-gray-500 mb-3">Comment saurons-nous si l'activité a été un succès éducatif ?</p>
+                  
+                  <QuickSuggestions 
+                     list={getCombinedList('evaluation', SUGGESTIONS.evaluation)}
+                     onSelect={(val) => setActivity({...activity, evaluationCriteria: [...(activity.evaluationCriteria || []), val]})}
+                     colorClass="bg-mdj-yellow/10 text-mdj-yellow border-mdj-yellow/30 hover:bg-mdj-yellow hover:text-black"
+                  />
+
                   <div className="space-y-2">
                     {(activity.evaluationCriteria || []).map((crit, i) => (
                       <div key={i} className="flex gap-2">
@@ -347,7 +571,7 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                     <button 
                       onClick={() => setActivity({...activity, evaluationCriteria: [...(activity.evaluationCriteria || []), ""]})}
                       className="text-sm text-mdj-yellow font-medium hover:underline hover:text-white transition-colors"
-                    >+ Ajouter un critère</button>
+                    >+ Ajouter un critère manuellement</button>
                   </div>
                 </div>
               </div>
@@ -373,15 +597,32 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
 
                       <h3 className="font-bold text-white mb-4 flex items-center gap-2"><MapPin className="w-5 h-5 text-mdj-cyan"/> Lieu & Rendez-vous</h3>
                       <div className="space-y-4">
-                        <div>
-                          <label className={labelClass}>Nom du lieu (Requis)</label>
-                          <input 
+                        <div className="flex justify-between items-end">
+                            <label className={labelClass}>Nom du lieu (Requis)</label>
+                            <button 
+                                onClick={() => setActivity(prev => ({
+                                    ...prev,
+                                    logistics: {
+                                        ...prev.logistics,
+                                        venueName: 'MDJ (Aréna Jérôme-Cotnoir)',
+                                        address: '5225 Rue de Courcelette, Trois-Rivières, QC G8Y 4L4',
+                                        phoneNumber: '(819) 694-7564',
+                                        website: 'https://mdjescalejeunesse.ca',
+                                        transportRequired: false
+                                    }
+                                }))}
+                                className="text-[10px] bg-mdj-cyan/10 hover:bg-mdj-cyan/20 px-2 py-1 rounded text-mdj-cyan border border-mdj-cyan/30 transition-colors flex items-center gap-1 mb-1"
+                                title="Remplir avec les infos de l'Aréna"
+                            >
+                                <MapPin className="w-3 h-3"/> MDJ / Aréna
+                            </button>
+                        </div>
+                        <input 
                             className={inputClass}
                             value={activity.logistics.venueName} 
                             onChange={e => setActivity({...activity, logistics: {...activity.logistics, venueName: e.target.value}})} 
                             placeholder="Ex: Musée POP, Maïkan Aventure..."
-                          />
-                        </div>
+                        />
                         <div>
                           <label className={labelClass}>Adresse complète</label>
                           <input className={inputClass} value={activity.logistics.address} onChange={e => setActivity({...activity, logistics: {...activity.logistics, address: e.target.value}})} />
@@ -493,6 +734,15 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
 
             {activeTab === 'materials' && (
               <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm max-w-4xl mx-auto animate-in fade-in duration-300">
+                <div className="mb-4">
+                    <label className={labelClass}>Suggestions de matériel</label>
+                    <QuickSuggestions 
+                        list={getCombinedList('materials', SUGGESTIONS.materials)}
+                        onSelect={(val) => setActivity({...activity, materials: [...activity.materials, { item: val, quantity: '1', supplier: 'MDJ', acquired: false }]})}
+                        colorClass="bg-white/10 text-gray-300 border-white/20 hover:bg-white/20"
+                    />
+                </div>
+                
                 <table className="w-full">
                   <thead>
                     <tr className="text-left text-xs font-bold text-gray-500 uppercase border-b border-white/10 tracking-wider">
@@ -547,7 +797,7 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                   onClick={() => setActivity({...activity, materials: [...activity.materials, { item: '', quantity: '', supplier: '', acquired: false }]})}
                   className="mt-6 text-sm bg-white/5 text-gray-300 px-4 py-2 rounded-xl hover:bg-white/10 font-bold flex items-center gap-2 transition-colors border border-white/10"
                 >
-                  <Wand2 className="w-3 h-3" /> Ajouter un article
+                  <Wand2 className="w-3 h-3" /> Ajouter un article manuellement
                 </button>
               </div>
             )}
@@ -561,6 +811,11 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                        <h3 className="flex items-center gap-2 font-bold text-white mb-4">
                            <Gavel className="w-5 h-5 text-mdj-magenta"/> Règlements du Site
                        </h3>
+                       <QuickSuggestions 
+                          list={getCombinedList('siteRules', SUGGESTIONS.siteRules)}
+                          onSelect={(val) => setActivity({...activity, riskManagement: {...activity.riskManagement, siteRules: [...(activity.riskManagement.siteRules || []), val]}})}
+                          colorClass="bg-mdj-magenta/10 text-mdj-magenta border-mdj-magenta/20"
+                       />
                        <div className="space-y-2">
                            {(activity.riskManagement.siteRules || []).map((rule, idx) => (
                                <div key={idx} className="flex gap-2 items-start text-sm text-gray-300">
@@ -583,7 +838,7 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                            <button 
                              onClick={() => setActivity({...activity, riskManagement: {...activity.riskManagement, siteRules: [...(activity.riskManagement.siteRules || []), ""]}})}
                              className="text-xs text-mdj-magenta font-bold hover:underline"
-                           >+ Ajouter un règlement</button>
+                           >+ Ajouter un règlement manuellement</button>
                        </div>
                     </div>
 
@@ -591,6 +846,11 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                        <h3 className="flex items-center gap-2 font-bold text-white mb-4">
                            <FileText className="w-5 h-5 text-mdj-cyan"/> Obligations Administratives
                        </h3>
+                       <QuickSuggestions 
+                          list={getCombinedList('compliance', SUGGESTIONS.compliance)}
+                          onSelect={(val) => setActivity({...activity, riskManagement: {...activity.riskManagement, complianceRequirements: [...(activity.riskManagement.complianceRequirements || []), val]}})}
+                          colorClass="bg-mdj-cyan/10 text-mdj-cyan border-mdj-cyan/20"
+                       />
                        <div className="space-y-2">
                            {(activity.riskManagement.complianceRequirements || []).map((req, idx) => (
                                <div key={idx} className="flex gap-2 items-start text-sm text-gray-300">
@@ -613,36 +873,54 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                            <button 
                              onClick={() => setActivity({...activity, riskManagement: {...activity.riskManagement, complianceRequirements: [...(activity.riskManagement.complianceRequirements || []), ""]}})}
                              className="text-xs text-mdj-cyan font-bold hover:underline"
-                           >+ Ajouter une obligation (Décharge/Formulaire)</button>
+                           >+ Ajouter manuellement</button>
                        </div>
                     </div>
                  </div>
 
                  <div className="bg-mdj-orange/10 p-6 rounded-2xl border border-mdj-orange/20 shadow-sm">
                    <h3 className="flex items-center gap-2 font-bold text-mdj-orange mb-4"><ShieldAlert className="w-5 h-5"/> Analyse de Risques</h3>
-                   <div className="flex flex-wrap gap-2">
+                   <QuickSuggestions 
+                        list={getCombinedList('hazards', SUGGESTIONS.hazards)}
+                        onSelect={(val) => setActivity({...activity, riskManagement: {...activity.riskManagement, hazards: [...activity.riskManagement.hazards, val]}})}
+                        colorClass="bg-mdj-orange/20 text-mdj-orange border-mdj-orange/40 hover:bg-mdj-orange hover:text-white"
+                   />
+                   <div className="space-y-2 mt-4">
                      {activity.riskManagement.hazards.map((hazard, idx) => (
-                       <span key={idx} className="bg-mdj-black px-3 py-1.5 rounded-lg text-sm text-white border border-mdj-orange/30 shadow-sm flex items-center gap-2">
-                         {hazard}
-                         <X className="w-3 h-3 cursor-pointer hover:text-mdj-orange" onClick={() => {
-                            const newHazards = activity.riskManagement.hazards.filter((_, i) => i !== idx);
-                            setActivity({...activity, riskManagement: {...activity.riskManagement, hazards: newHazards}});
-                         }}/>
-                       </span>
+                       <div key={idx} className="flex gap-2 items-center">
+                          <ShieldAlert className="w-4 h-4 text-mdj-orange shrink-0"/>
+                          <input
+                            className="flex-1 bg-transparent border-b border-mdj-orange/30 focus:border-mdj-orange focus:ring-0 p-1 text-sm text-gray-300 focus:text-white transition-colors"
+                            value={hazard}
+                            onChange={(e) => {
+                                const newHazards = [...activity.riskManagement.hazards];
+                                newHazards[idx] = e.target.value;
+                                setActivity({...activity, riskManagement: {...activity.riskManagement, hazards: newHazards}});
+                            }}
+                          />
+                          <button onClick={() => {
+                             const newHazards = activity.riskManagement.hazards.filter((_, i) => i !== idx);
+                             setActivity({...activity, riskManagement: {...activity.riskManagement, hazards: newHazards}});
+                          }} className="text-gray-500 hover:text-red-500"><X className="w-4 h-4"/></button>
+                       </div>
                      ))}
                      <button 
-                      onClick={() => {
-                        const val = prompt("Nouveau risque identifié:");
-                        if(val) setActivity({...activity, riskManagement: {...activity.riskManagement, hazards: [...activity.riskManagement.hazards, val]}})
-                      }}
-                      className="px-3 py-1.5 rounded-lg text-sm border border-mdj-orange/50 border-dashed text-mdj-orange hover:bg-mdj-orange/10 bg-transparent font-bold">
-                       + Ajouter
+                      onClick={() => setActivity({...activity, riskManagement: {...activity.riskManagement, hazards: [...activity.riskManagement.hazards, ""]}})}
+                      className="text-xs text-mdj-orange font-bold hover:underline mt-2">
+                       + Ajouter manuellement
                      </button>
                    </div>
                  </div>
 
                  <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm">
                       <label className="block text-sm font-bold text-white mb-4">Protocoles de sécurité & Code de vie</label>
+                      
+                      <QuickSuggestions 
+                            list={getCombinedList('protocols', SUGGESTIONS.protocols)}
+                            onSelect={(val) => setActivity({...activity, riskManagement: {...activity.riskManagement, safetyProtocols: [...activity.riskManagement.safetyProtocols, val]}})}
+                            colorClass="bg-green-500/10 text-green-400 border-green-500/30 hover:bg-green-500/20"
+                      />
+
                       <div className="space-y-3">
                         {activity.riskManagement.safetyProtocols.map((proto, idx) => (
                           <div key={idx} className="flex gap-3 items-start group">
@@ -663,9 +941,9 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                           </div>
                         ))}
                         <button 
-                          onClick={() => setActivity({...activity, riskManagement: {...activity.riskManagement, safetyProtocols: [...activity.riskManagement.safetyProtocols, "Respect du Code de vie (Tolérance Zéro)"]}})}
+                          onClick={() => setActivity({...activity, riskManagement: {...activity.riskManagement, safetyProtocols: [...activity.riskManagement.safetyProtocols, ""]}})}
                           className="text-sm text-mdj-cyan pl-8 hover:underline font-bold"
-                        >+ Ajouter une mesure</button>
+                        >+ Ajouter manuellement</button>
                       </div>
                    </div>
 
@@ -710,6 +988,16 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
 
                 <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm">
                   <h3 className="font-bold text-white mb-4 flex items-center gap-2"><DollarSign className="w-5 h-5 text-mdj-yellow"/> Postes budgétaires</h3>
+                  
+                  <QuickSuggestions 
+                     list={getCombinedList('budget', SUGGESTIONS.budget)} 
+                     onSelect={(val) => {
+                         const newItems = [...activity.budget.items, { description: val, amount: 0 }];
+                         setActivity({...activity, budget: {...activity.budget, items: newItems}});
+                     }}
+                     colorClass="bg-mdj-yellow/10 text-mdj-yellow border-mdj-yellow/30"
+                  />
+
                   <div className="space-y-2">
                     {activity.budget.items.map((item, idx) => (
                        <div key={idx} className="flex justify-between items-center py-3 px-4 bg-white/5 rounded-xl border border-white/5 group hover:bg-white/10 transition-colors">
@@ -749,7 +1037,7 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                   <button 
                     onClick={() => setActivity({...activity, budget: {...activity.budget, items: [...activity.budget.items, { description: 'Nouvel item', amount: 0 }]}})}
                     className="mt-4 text-sm text-mdj-yellow font-bold hover:underline pl-1"
-                  >+ Ajouter un poste</button>
+                  >+ Ajouter un poste manuellement</button>
                 </div>
               </div>
             )}
@@ -780,29 +1068,50 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                    </div>
                    <div className="mt-8">
                       <label className={labelClass}>Personnel de soutien</label>
-                      <div className="flex flex-wrap gap-2">
+                      
+                      {/* Suggestions combinées : Défaut + Employés + Custom */}
+                      <QuickSuggestions 
+                            list={getCombinedList('supportStaff', DEFAULT_SUPPORT_STAFF)}
+                            onSelect={(val) => setActivity({...activity, staffing: {...activity.staffing, supportStaff: [...activity.staffing.supportStaff, val]}})}
+                            colorClass="bg-white/5 border-white/10 hover:bg-white/10"
+                      />
+
+                      <div className="space-y-2 mt-4">
                          {activity.staffing.supportStaff.map((staff, idx) => (
-                           <span key={idx} className="bg-white/10 pl-3 pr-2 py-1.5 rounded-lg text-sm text-white flex items-center gap-2 border border-white/10">
-                             {staff}
-                             <X className="w-3.5 h-3.5 cursor-pointer text-gray-400 hover:text-red-500" onClick={() => {
-                               const newStaff = activity.staffing.supportStaff.filter((_, i) => i !== idx);
-                               setActivity({...activity, staffing: {...activity.staffing, supportStaff: newStaff}});
-                             }}/>
-                           </span>
+                           <div key={idx} className="flex gap-2 items-center">
+                              <Users className="w-4 h-4 text-gray-500 shrink-0"/>
+                              <input
+                                className="flex-1 bg-transparent border-b border-white/10 focus:border-white focus:ring-0 p-1 text-sm text-gray-300 focus:text-white transition-colors"
+                                value={staff}
+                                onChange={(e) => {
+                                    const newStaff = [...activity.staffing.supportStaff];
+                                    newStaff[idx] = e.target.value;
+                                    setActivity({...activity, staffing: {...activity.staffing, supportStaff: newStaff}});
+                                }}
+                              />
+                              <button onClick={() => {
+                                const newStaff = activity.staffing.supportStaff.filter((_, i) => i !== idx);
+                                setActivity({...activity, staffing: {...activity.staffing, supportStaff: newStaff}});
+                              }} className="text-gray-500 hover:text-red-500"><X className="w-4 h-4"/></button>
+                           </div>
                          ))}
                          <button 
-                            onClick={() => {
-                              const val = prompt("Nom du staff:");
-                              if(val) setActivity({...activity, staffing: {...activity.staffing, supportStaff: [...activity.staffing.supportStaff, val]}});
-                            }}
-                            className="text-sm text-mdj-cyan hover:bg-mdj-cyan/10 px-4 py-1.5 rounded-lg border border-mdj-cyan/30 border-dashed transition-colors font-bold"
-                         >+ Ajouter</button>
+                            onClick={() => setActivity({...activity, staffing: {...activity.staffing, supportStaff: [...activity.staffing.supportStaff, ""]}})}
+                            className="text-xs text-mdj-cyan font-bold hover:underline mt-2"
+                         >+ Ajouter manuellement</button>
                       </div>
                    </div>
                    <div className="mt-8 p-4 bg-mdj-yellow/5 rounded-xl border border-mdj-yellow/20">
-                      <label className="text-xs font-bold text-mdj-yellow uppercase mb-1 block">Qualifications requises</label>
+                      <label className="text-xs font-bold text-mdj-yellow uppercase mb-2 block">Qualifications requises</label>
+                      
+                      <QuickSuggestions 
+                            list={getCombinedList('qualifications', SUGGESTIONS.qualifications)}
+                            onSelect={(val) => setActivity({...activity, staffing: {...activity.staffing, specialQualifications: (activity.staffing.specialQualifications ? activity.staffing.specialQualifications + ", " : "") + val}})}
+                            colorClass="bg-mdj-yellow/10 border-mdj-yellow/20 hover:bg-mdj-yellow/20 text-mdj-yellow"
+                      />
+
                       <input 
-                        className="w-full bg-transparent border-none p-0 text-sm text-white focus:ring-0 placeholder-gray-500" 
+                        className="w-full bg-transparent border-b border-mdj-yellow/30 p-2 text-sm text-white focus:ring-0 placeholder-gray-500 mt-2" 
                         value={activity.staffing.specialQualifications || ""}
                         onChange={e => setActivity({...activity, staffing: {...activity.staffing, specialQualifications: e.target.value}})}
                         placeholder="Ex: RCR, Permis de conduire classe 4B..."
@@ -821,9 +1130,17 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
             MDJ L'Escale Jeunesse - La Piaule
           </div>
           <div className="flex gap-3">
+             <button 
+              onClick={() => HtmlGeneratorService.downloadActivityDetail(activity)} 
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-mdj-black border border-white/10 hover:bg-white/10 hover:border-white/20 text-gray-300 font-bold transition-all mr-auto"
+              title="Générer une fiche terrain imprimable"
+            >
+              <Printer className="w-4 h-4" /> <span className="hidden sm:inline">Imprimer Fiche</span>
+            </button>
+
             <button onClick={onClose} className="px-6 py-2.5 rounded-xl text-gray-400 hover:bg-white/5 hover:text-white font-bold transition-all">Annuler</button>
             <button 
-              onClick={() => onSave(activity)}
+              onClick={handleSaveInternal}
               className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-mdj-cyan to-blue-600 text-black hover:to-blue-500 font-bold shadow-[0_0_20px_rgba(0,255,255,0.3)] hover:shadow-[0_0_30px_rgba(0,255,255,0.5)] transition-all"
             >
               <Save className="w-4 h-4" /> Enregistrer le plan

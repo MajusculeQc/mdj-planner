@@ -1,11 +1,10 @@
+
 export enum ActivityType {
-  SOCIAL = 'Vie Associative & Social',
-  CREATIVE = 'Culture & Expression',
-  SPORT = 'Santé & Sports',
-  EDUCATIONAL = 'Éducation & Prévention',
-  OUTDOOR = 'Plein Air & Environnement',
-  DEMOCRATIC = 'Vie Démocratique',
-  FREE = 'Accueil & Milieu de vie'
+  SAINES_HABITUDES = 'Saines habitudes de vie',
+  VIE_ASSOCIATIVE = 'Vie associative et démocratique',
+  PREVENTION = 'Prévention et sensibilisation',
+  CULTURELLE = 'Expression artistique et culturelle',
+  LOISIRS = 'Loisirs et divertissements'
 }
 
 export interface Material {
