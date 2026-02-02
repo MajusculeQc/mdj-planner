@@ -6,10 +6,15 @@ import { Activity } from "../types";
  * CONFIGURATION MSAL (AUTHENTIFICATION)
  */
 // Fonction utilitaire pour nettoyer l'URL
-// CORRECTION MAJEURE: Retire le préfixe "blob:" qui apparaît dans les previews Google AI
 const getCleanRedirectUri = () => {
   if (typeof window === 'undefined') return '';
   
+  // FIX: Force l'URL de production exacte si on est sur le domaine Netlify
+  // Cela évite les erreurs de mismatch (slash final, http vs https, etc.)
+  if (window.location.hostname === 'mdj-planner.netlify.app') {
+      return 'https://mdj-planner.netlify.app';
+  }
+
   let uri = window.location.href.split(/[?#]/)[0];
   
   // Si l'URI commence par blob: (ex: blob:https://...), on le retire pour garder https://...
@@ -26,7 +31,7 @@ const MSAL_CONFIG = {
     clientId: "e74166aa-73fd-4f74-9689-a71b58fc23a6", 
     // Utilisation de 'organizations' pour le support multi-tenant / single tenant correct
     authority: "https://login.microsoftonline.com/organizations",
-    // IMPORTANT: URL nettoyée sans 'blob:' ni slash final
+    // IMPORTANT: URL nettoyée ou forcée pour la prod
     redirectUri: getCleanRedirectUri(), 
   },
   cache: {
