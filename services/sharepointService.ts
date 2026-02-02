@@ -5,12 +5,29 @@ import { Activity } from "../types";
 /**
  * CONFIGURATION MSAL (AUTHENTIFICATION)
  */
+// Fonction utilitaire pour nettoyer l'URL
+// CORRECTION MAJEURE: Retire le préfixe "blob:" qui apparaît dans les previews Google AI
+const getCleanRedirectUri = () => {
+  if (typeof window === 'undefined') return '';
+  
+  let uri = window.location.href.split(/[?#]/)[0];
+  
+  // Si l'URI commence par blob: (ex: blob:https://...), on le retire pour garder https://...
+  if (uri.startsWith('blob:')) {
+      uri = uri.substring(5); // Retire 'blob:'
+  }
+  
+  // Retire le slash final si présent
+  return uri.endsWith('/') ? uri.slice(0, -1) : uri;
+};
+
 const MSAL_CONFIG = {
   auth: {
     clientId: "e74166aa-73fd-4f74-9689-a71b58fc23a6", 
     // Utilisation de 'organizations' pour le support multi-tenant / single tenant correct
     authority: "https://login.microsoftonline.com/organizations",
-    redirectUri: window.location.origin, // C'est cette URL qui doit être dans Azure
+    // IMPORTANT: URL nettoyée sans 'blob:' ni slash final
+    redirectUri: getCleanRedirectUri(), 
   },
   cache: {
     cacheLocation: "localStorage",
@@ -41,7 +58,7 @@ interface SPConfig {
 const getMsalInstance = async () => {
   if (!msalInstance) {
     try {
-      console.log("🔐 Initialisation MSAL avec Redirect URI:", window.location.origin);
+      console.log("🔐 Initialisation MSAL avec Redirect URI:", MSAL_CONFIG.auth.redirectUri);
       msalInstance = new PublicClientApplication(MSAL_CONFIG);
       await msalInstance.initialize();
     } catch (error) {
@@ -101,12 +118,17 @@ export const SharePointService = {
         msal.setActiveAccount(response.account);
         return response.account;
     } catch (e: any) {
+        // GESTION ANNULATION UTILISATEUR
+        if (e.errorCode === "user_cancelled" || (e.message && e.message.includes("user_cancelled"))) {
+            throw new Error("CANCELLED");
+        }
+
         console.error("Login failed", e);
         
         // Gestion des erreurs courantes Azure avec instructions claires
-        if (e.message && e.message.includes("AADSTS500113")) {
-            const currentUrl = window.location.origin;
-            alert(`⚠️ ACTION REQUISE (AADSTS500113)\n\nL'adresse "${currentUrl}" n'est pas enregistrée dans Azure.\n\nPROCÉDURE :\n1. Copiez cette adresse : ${currentUrl}\n2. Allez sur le Portail Azure > App Registrations > MDJ PLANNER\n3. Allez dans Authentication > Single-page application\n4. Ajoutez l'URI et sauvegardez.`);
+        if (e.message && (e.message.includes("AADSTS50011") || e.message.includes("AADSTS500113"))) {
+            const currentUrl = MSAL_CONFIG.auth.redirectUri;
+            alert(`⚠️ ERREUR D'ADRESSE (AADSTS50011)\n\nL'adresse que vous avez mise dans Azure ne correspond pas à l'adresse actuelle.\n\nADRESSE ACTUELLE À COPIER DANS AZURE :\n${currentUrl}\n\nL'environnement de test change souvent d'adresse. Mettez à jour Azure avec celle ci-dessus.`);
         } else if (e.message && e.message.includes("AADSTS50194")) {
             alert("ERREUR CONFIG (Multi-tenant): L'application Azure n'accepte pas les comptes personnels ou externes. Assurez-vous d'utiliser un compte professionnel Office 365 lié au tenant.");
         } else if (e.message && e.message.includes("AADSTS650053")) {

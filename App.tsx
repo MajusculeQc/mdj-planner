@@ -4,7 +4,7 @@ import ActivityModal from './components/ActivityModal';
 import { ActivityService } from './services/activityService';
 import { SharePointService } from './services/sharepointService';
 import { HtmlGeneratorService } from './services/htmlGeneratorService'; // Import added
-import { Calendar as CalendarIcon, PieChart, CheckCircle, AlertCircle, ArrowRight, LayoutGrid, ChevronLeft, ChevronRight, Upload, Plus, School, Palmtree, CalendarOff, Save, FileType, FileText, Trash2, Cloud, CloudOff, BellRing, Code, Target, Check, Utensils, LogOut } from 'lucide-react';
+import { Calendar as CalendarIcon, PieChart, CheckCircle, AlertCircle, ArrowRight, LayoutGrid, ChevronLeft, ChevronRight, Upload, Plus, School, Palmtree, CalendarOff, Save, FileType, FileText, Trash2, Cloud, CloudOff, BellRing, Code, Target, Check, Utensils, LogOut, Copy, Settings, Zap, ExternalLink, Database, Wifi, WifiOff } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Cell } from 'recharts';
 
 // Helper pour créer des objets vides rapidement
@@ -311,6 +311,27 @@ const App = () => {
   const [userAccount, setUserAccount] = useState<any>(null);
   const [isConfiguring, setIsConfiguring] = useState(false);
 
+  // Detect Environment
+  const isBoltEnv = typeof window !== 'undefined' && (
+      window.location.hostname.includes('bolt.new') || 
+      window.location.hostname.includes('stackblitz') || 
+      window.location.hostname.includes('usercontent.goog')
+  );
+
+  const isEditorEnv = typeof window !== 'undefined' && window.location.hostname.includes('aistudio.google.com');
+
+  // URL exacte courante (sans query params, sans slash final) pour Azure
+  // NETTOYAGE: On retire le 'blob:' si présent pour l'affichage à l'utilisateur
+  const getCleanUrl = () => {
+    if (typeof window === 'undefined') return '';
+    let uri = window.location.href.split(/[?#]/)[0];
+    if (uri.startsWith('blob:')) uri = uri.substring(5);
+    return uri.endsWith('/') ? uri.slice(0, -1) : uri;
+  };
+
+  const currentRedirectUri = getCleanUrl();
+  const isBlobMode = typeof window !== 'undefined' && window.location.protocol === 'blob:';
+
   // Remove loading screen when App is mounted
   useEffect(() => {
     const loadingScreen = document.getElementById('loading-screen');
@@ -375,12 +396,25 @@ const App = () => {
               // Config existe déjà
               setIsCloudMode(true);
           }
-      } catch (e) {
-          console.error(e);
-          // alert("La connexion Microsoft a échoué.");
+      } catch (e: any) {
+          if (e.message === "CANCELLED") {
+             // L'utilisateur a fermé la fenêtre.
+             // On log simplement l'info pour le debug sans effrayer l'utilisateur.
+             console.log("Connexion annulée par l'utilisateur.");
+          } else {
+             console.error(e);
+             // alert("La connexion Microsoft a échoué.");
+          }
       } finally {
           setIsConfiguring(false);
       }
+  };
+
+  const handleCopyRedirectUri = () => {
+     const uri = currentRedirectUri;
+     navigator.clipboard.writeText(uri).then(() => {
+        alert(`ADRESSE COPIÉE !\n\n${uri}\n\n1. Allez dans le portail Azure.\n2. Cliquez sur 'Ajouter un URI de redirection'.\n3. Collez cette adresse.`);
+     });
   };
 
   const handleLogout = async () => {
@@ -573,6 +607,12 @@ const App = () => {
   return (
     <div className="min-h-screen bg-mdj-black font-sans text-gray-100 selection:bg-mdj-cyan selection:text-mdj-black pb-20">
       <header className="bg-mdj-dark/90 backdrop-blur-md border-b border-white/10 sticky top-0 z-10 shadow-2xl">
+        {isEditorEnv && (
+           <div className="bg-red-500 text-white px-4 py-2 text-center text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2">
+              <AlertCircle className="w-4 h-4" />
+              Attention: Vous êtes dans l'éditeur. La connexion Microsoft ne fonctionnera pas ici. Ouvrez l'aperçu dans un nouvel onglet.
+           </div>
+        )}
         <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
           <div className="flex items-center gap-4">
             <img src="https://mdjescalejeunesse.ca/wp-content/uploads/2024/01/mdj-header-l039escale-jeunesse-la-piaule-1.png" alt="Logo MDJ" className="h-12 w-auto drop-shadow-[0_0_5px_rgba(0,255,255,0.5)]" />
@@ -589,31 +629,38 @@ const App = () => {
           </div>
           <div className="flex gap-4 text-sm items-center">
              
-             {isCloudMode ? (
-                 <button 
-                    onClick={handleLogout}
-                    className="flex items-center gap-2 px-4 py-2 rounded-full border bg-blue-600/20 text-blue-400 border-blue-500/50 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/50 transition-all text-xs font-bold uppercase tracking-wider"
-                    title={`Connecté: ${userAccount?.username || 'Utilisateur'}`}
-                 >
-                    <Cloud className="w-4 h-4" />
-                    <span className="hidden md:inline">{userAccount?.username?.split(' ')[0] || 'CLOUD ACTIF'}</span>
-                    <LogOut className="w-3 h-3 ml-1" />
-                 </button>
-             ) : (
-                <button 
-                  onClick={handleMicrosoftLogin}
-                  disabled={isConfiguring}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-full border transition-all text-xs font-bold uppercase tracking-wider bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 ${isConfiguring ? 'opacity-50 cursor-wait' : ''}`}
-                  title="Connexion Microsoft 365"
-                >
-                    {isConfiguring ? (
-                        <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
-                    ) : (
-                        <CloudOff className="w-4 h-4" />
-                    )}
-                    {isConfiguring ? 'CONFIG...' : 'MODE LOCAL'}
-                </button>
+             {isBoltEnv && (
+                 <div className="hidden md:flex items-center gap-1 bg-yellow-500/10 border border-yellow-500/30 text-yellow-500 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider" title="Environnement de développement détecté">
+                     <Zap className="w-3 h-3" /> BOLT
+                 </div>
              )}
+
+             {/* Connection Status Indicator / Toggle */}
+            <button
+                onClick={isCloudMode ? handleLogout : handleMicrosoftLogin}
+                disabled={isConfiguring}
+                className={`flex items-center gap-2 px-4 py-2 rounded-full border transition-all text-xs font-bold uppercase tracking-wider ${
+                    isCloudMode 
+                    ? 'bg-green-500/10 text-green-400 border-green-500/30 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/30' 
+                    : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10'
+                } ${isConfiguring ? 'opacity-50 cursor-wait' : ''}`}
+                title={isCloudMode ? "Déconnecter de SharePoint" : "Connecter à SharePoint"}
+            >
+                {isConfiguring ? (
+                    <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+                ) : isCloudMode ? (
+                    <>
+                        <Database className="w-4 h-4" />
+                        <span className="hidden md:inline">EN LIGNE</span>
+                        <Check className="w-3 h-3 ml-1" />
+                    </>
+                ) : (
+                    <>
+                        <Database className="w-4 h-4 opacity-50" />
+                        <span className="hidden md:inline">HORS LIGNE</span>
+                    </>
+                )}
+            </button>
 
             <div className="hidden md:flex items-center gap-2 bg-mdj-black/50 px-4 py-2 rounded-full border border-mdj-cyan/30 text-mdj-cyan font-bold shadow-[0_0_10px_rgba(0,255,255,0.1)]">
               <PieChart className="w-4 h-4" />
