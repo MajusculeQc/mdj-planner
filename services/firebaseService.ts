@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
-import { getFirestore, collection, doc, setDoc, deleteDoc, Firestore, onSnapshot, query, Unsubscribe } from "firebase/firestore";
+import { getFirestore, collection, doc, setDoc, deleteDoc, Firestore, onSnapshot, query, Unsubscribe, orderBy } from "firebase/firestore";
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, Auth, User, onAuthStateChanged } from "firebase/auth";
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "firebase/app-check";
 import { Activity } from "../types";
 
 const CONFIG_KEY = 'mdj_firebase_config';
@@ -12,7 +13,6 @@ export interface FirebaseConfig {
   storageBucket: string;
   messagingSenderId: string;
   appId: string;
-  measurementId?: string;
 }
 
 let app: FirebaseApp | null = null;
@@ -21,24 +21,15 @@ let auth: Auth | null = null;
 
 export const FirebaseService = {
   
-  // --- CONFIGURATION ---
-
-  hasConfig: (): boolean => {
+  isConfigured: () => {
     return !!localStorage.getItem(CONFIG_KEY);
-  },
-
-  saveConfig: (config: FirebaseConfig) => {
-    localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
-    FirebaseService.initialize();
   },
 
   initialize: () => {
     if (app) return app;
 
     const configStr = localStorage.getItem(CONFIG_KEY);
-    if (!configStr) {
-      return null;
-    }
+    if (!configStr) return null;
 
     try {
       const config = JSON.parse(configStr);
@@ -57,130 +48,58 @@ export const FirebaseService = {
     }
   },
 
-  resetConfig: async () => {
-    if (auth) await signOut(auth);
-    localStorage.removeItem(CONFIG_KEY);
-    app = null;
-    db = null;
-    auth = null;
-    window.location.reload();
+  saveConfig: (config: FirebaseConfig) => {
+    localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+    window.location.reload(); // Recharger pour appliquer la nouvelle config
   },
-
-  // --- AUTHENTICATION ---
 
   login: async (): Promise<User | null> => {
     if (!auth) FirebaseService.initialize();
     if (!auth) throw new Error("Firebase non configuré");
 
     const provider = new GoogleAuthProvider();
-    provider.setCustomParameters({
-      prompt: 'select_account'
-    });
-
     try {
       const result = await signInWithPopup(auth, provider);
-      const user = result.user;
-      
-      // Validation UX du domaine (La sécurité réelle est dans les règles Firestore)
-      /* 
-      if (user.email && !user.email.endsWith('@mdjescalejeunesse.ca')) {
-         // Optionnel
-      } 
-      */
-      
-      return user;
+      return result.user;
     } catch (error: any) {
       console.error("Login failed", error);
-      
-      // GESTION ERREUR DOMAINE NON AUTORISÉ
-      if (error.code === 'auth/unauthorized-domain') {
-         const domain = window.location.hostname;
-         const message = `⛔ DOMAINE NON AUTORISÉ (${domain})\n\n` +
-                         `Ce domaine n'est pas autorisé dans votre Console Firebase.\n\n` +
-                         `ACTION REQUISE :\n` +
-                         `1. Allez sur console.firebase.google.com\n` +
-                         `2. Ouvrez votre projet > Authentication > Settings > Authorized Domains\n` +
-                         `3. Cliquez sur "Add domain" et ajoutez : ${domain}\n\n` +
-                         `La fenêtre de configuration va s'ouvrir pour vous aider.`;
-         alert(message);
-      } else if (error.code !== 'auth/popup-closed-by-user') {
-        alert(`Erreur de connexion Google: ${error.message}`);
-      }
       throw error;
     }
   },
 
   logout: async () => {
-    if (!auth) return;
-    await signOut(auth);
-  },
-
-  getUser: (): User | null => {
-    if (!auth) return null;
-    return auth.currentUser;
+    if (auth) await signOut(auth);
   },
 
   subscribeToAuth: (callback: (user: User | null) => void) => {
     if (!auth) FirebaseService.initialize();
-    if (!auth) {
-        callback(null);
-        return () => {};
-    }
+    if (!auth) return () => {};
     return onAuthStateChanged(auth, callback);
   },
 
-  // --- DATABASE TEMPS RÉEL (FIRESTORE) ---
-
+  /**
+   * Écoute les activités en temps réel depuis Firestore
+   */
   subscribeToActivities: (callback: (activities: Activity[]) => void): Unsubscribe => {
     if (!db) FirebaseService.initialize();
-    if (!db) throw new Error("Base de données non disponible");
+    if (!db) return () => {};
 
-    const q = query(collection(db, "activities"));
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const activities = snapshot.docs.map(doc => ({
-        ...doc.data(),
-        id: doc.id 
-      })) as Activity[];
-      
+    const q = query(collection(db, "activities"), orderBy("date", "asc"));
+    return onSnapshot(q, (snapshot) => {
+      const activities = snapshot.docs.map(doc => doc.data() as Activity);
       callback(activities);
     }, (error) => {
-      console.error("Erreur de synchronisation:", error);
-      if (error.code === 'permission-denied') {
-         console.warn("Permissions insuffisantes pour lire les activités.");
-      }
-    });
-
-    return unsubscribe;
-  },
-
-  getAll: async (): Promise<Activity[]> => {
-    return new Promise((resolve, reject) => {
-        const unsub = FirebaseService.subscribeToActivities((data) => {
-            unsub();
-            resolve(data);
-        });
+      console.error("Erreur de synchronisation Firestore:", error);
     });
   },
 
   save: async (activity: Activity): Promise<void> => {
     if (!db) throw new Error("Base de données non connectée");
-
-    try {
-      await setDoc(doc(db, "activities", activity.id), activity);
-    } catch (error) {
-      console.error("Firestore SAVE Error:", error);
-      throw error;
-    }
+    await setDoc(doc(db, "activities", activity.id), activity);
   },
 
   delete: async (id: string): Promise<void> => {
     if (!db) return;
-    try {
-      await deleteDoc(doc(db, "activities", id));
-    } catch (error) {
-      console.error("Firestore DELETE Error:", error);
-      throw error;
-    }
+    await deleteDoc(doc(db, "activities", id));
   }
 };

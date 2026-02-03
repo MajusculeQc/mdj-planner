@@ -1,3 +1,4 @@
+
 import { GoogleGenAI } from "@google/genai";
 import { Activity } from "../types";
 
@@ -51,13 +52,8 @@ const parseAIResponse = (text: string | undefined): any | null => {
 };
 
 const getAPIKey = (): string | undefined => {
-  // @ts-ignore
-  if (typeof process !== 'undefined' && process?.env?.API_KEY) return process.env.API_KEY;
-  // @ts-ignore
-  if (typeof window !== 'undefined' && window.process?.env?.API_KEY) return window.process.env.API_KEY;
-  // @ts-ignore
-  if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_KEY) return import.meta.env.VITE_API_KEY;
-  return undefined;
+  // Use process.env.API_KEY exclusively as per guidelines.
+  return process.env.API_KEY;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -76,6 +72,7 @@ export const GeminiService = {
       return "Erreur: Clé API manquante. Veuillez vérifier la configuration.";
     }
 
+    // Always use the named parameter for API key initialization.
     const ai = new GoogleGenAI({ apiKey });
 
     for (let attempt = 1; attempt <= CONFIG.MAX_RETRIES; attempt++) {
@@ -91,12 +88,14 @@ export const GeminiService = {
           config.responseMimeType = "application/json";
         }
 
+        // Must use ai.models.generateContent to query GenAI with both the model name and prompt.
         const response = await ai.models.generateContent({
           model: CONFIG.MODEL,
           contents: options.prompt,
           config: config
         });
 
+        // The simplest and most direct way to get the generated text content is by accessing the .text property.
         const text = response.text;
         if (!text) throw new Error("Empty response");
         return text;
