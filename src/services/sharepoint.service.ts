@@ -1,55 +1,52 @@
 // src/services/sharepoint.service.ts
 
 import { msalInstance, loginRequest, sharePointConfig } from '../config/auth-config';
-import { AuthenticationResult } from '@azure/msal-browser';
+import { AuthenticationResult, AccountInfo } from '@azure/msal-browser';
 
-export class SharePointService {
+class SharePointService {
   private accessToken: string | null = null;
-  private account: any = null;
+  private account: AccountInfo | null = null;
 
-  // Vérifier si l'utilisateur est connecté
+  /**
+   * Vérifier si l'utilisateur est connecté
+   */
   isAuthenticated(): boolean {
     const accounts = msalInstance.getAllAccounts();
     return accounts.length > 0;
   }
 
-  // Connexion à SharePoint
+  /**
+   * Obtenir l'utilisateur connecté
+   */
+  getCurrentUser(): AccountInfo | null {
+    const accounts = msalInstance.getAllAccounts();
+    return accounts.length > 0 ? accounts[0] : null;
+  }
+
+  /**
+   * Connexion à Microsoft/SharePoint
+   */
   async login(): Promise<AuthenticationResult> {
     try {
       const loginResponse = await msalInstance.loginPopup(loginRequest);
       console.log('✅ Connexion réussie', loginResponse);
       
       this.account = loginResponse.account;
-      
-      // Obtenir le token
-      const tokenResponse = await msalInstance.acquireTokenSilent({
-        ...loginRequest,
-        account: this.account
-      });
-      
-      this.accessToken = tokenResponse.accessToken;
-      console.log('✅ Token obtenu');
+      await this.getAccessToken();
       
       return loginResponse;
       
     } catch (error) {
       console.error('❌ Erreur de connexion:', error);
-      
-      // Si l'acquisition silencieuse échoue, demander de nouveau
-      try {
-        const tokenResponse = await msalInstance.acquireTokenPopup(loginRequest);
-        this.accessToken = tokenResponse.accessToken;
-        return tokenResponse;
-      } catch (popupError) {
-        console.error('❌ Erreur popup:', popupError);
-        throw popupError;
-      }
+      throw error;
     }
   }
 
-  // Déconnexion
+  /**
+   * Déconnexion
+   */
   async logout(): Promise<void> {
-    const account = msalInstance.getAllAccounts()[0];
+    const account = this.getCurrentUser();
     if (account) {
       await msalInstance.logoutPopup({ account });
     }
@@ -57,7 +54,9 @@ export class SharePointService {
     this.account = null;
   }
 
-  // Obtenir le token d'accès actuel
+  /**
+   * Obtenir le token d'accès (silencieux ou popup)
+   */
   private async getAccessToken(): Promise<string> {
     if (!this.account) {
       const accounts = msalInstance.getAllAccounts();
@@ -75,42 +74,87 @@ export class SharePointService {
       this.accessToken = response.accessToken;
       return this.accessToken;
     } catch (error) {
-      console.error('Erreur obtention token:', error);
-      throw error;
+      console.warn('Token silencieux échoué, tentative popup...', error);
+      
+      try {
+        const response = await msalInstance.acquireTokenPopup(loginRequest);
+        this.accessToken = response.accessToken;
+        return this.accessToken;
+      } catch (popupError) {
+        console.error('❌ Erreur obtention token:', popupError);
+        throw popupError;
+      }
     }
   }
 
-  // Récupérer des éléments d'une liste SharePoint
-  async getListItems(listName?: string): Promise<any[]> {
+  /**
+   * Effectuer une requête REST vers SharePoint
+   */
+  private async makeSharePointRequest(
+    endpoint: string,
+    options: RequestInit = {}
+  ): Promise<Response> {
     const token = await this.getAccessToken();
-    const list = listName || sharePointConfig.listName;
+    const url = `${sharePointConfig.siteUrl}${sharePointConfig.sitePath}${endpoint}`;
 
-    const response = await fetch(
-      `${sharePointConfig.siteUrl}/_api/web/lists/getbytitle('${list}')/items`,
-      {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/json;odata=verbose'
-        }
+    const defaultHeaders = {
+      'Authorization': `Bearer ${token}`,
+      'Accept': 'application/json;odata=verbose',
+      'Content-Type': 'application/json;odata=verbose'
+    };
+
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        ...defaultHeaders,
+        ...options.headers
       }
-    );
+    });
 
     if (!response.ok) {
-      throw new Error(`Erreur HTTP: ${response.status} - ${response.statusText}`);
+      const errorText = await response.text();
+      throw new Error(`SharePoint Error ${response.status}: ${errorText}`);
     }
+
+    return response;
+  }
+
+  /**
+   * Récupérer des éléments d'une liste SharePoint
+   */
+  async getListItems(listName?: string): Promise<any[]> {
+    const list = listName || sharePointConfig.listName;
+    
+    const response = await this.makeSharePointRequest(
+      `/_api/web/lists/getbytitle('${list}')/items`
+    );
 
     const data = await response.json();
     return data.d.results;
   }
 
-  // Créer un élément dans une liste SharePoint
-  async createListItem(itemData: any, listName?: string): Promise<any> {
-    const token = await this.getAccessToken();
+  /**
+   * Récupérer un élément spécifique par ID
+   */
+  async getListItemById(itemId: number, listName?: string): Promise<any> {
     const list = listName || sharePointConfig.listName;
+    
+    const response = await this.makeSharePointRequest(
+      `/_api/web/lists/getbytitle('${list}')/items(${itemId})`
+    );
 
-    // Obtenir le form digest pour les opérations POST
-    const digestResponse = await fetch(
-      `${sharePointConfig.siteUrl}/_api/contextinfo`,
+    const data = await response.json();
+    return data.d;
+  }
+
+  /**
+   * Obtenir le Form Digest pour les opérations POST/UPDATE/DELETE
+   */
+  private async getFormDigest(): Promise<string> {
+    const token = await this.getAccessToken();
+    
+    const response = await fetch(
+      `${sharePointConfig.siteUrl}${sharePointConfig.sitePath}/_api/contextinfo`,
       {
         method: 'POST',
         headers: {
@@ -120,17 +164,22 @@ export class SharePointService {
       }
     );
 
-    const digestData = await digestResponse.json();
-    const formDigest = digestData.d.GetContextWebInformation.FormDigestValue;
+    const data = await response.json();
+    return data.d.GetContextWebInformation.FormDigestValue;
+  }
 
-    const response = await fetch(
-      `${sharePointConfig.siteUrl}/_api/web/lists/getbytitle('${list}')/items`,
+  /**
+   * Créer un élément dans une liste SharePoint
+   */
+  async createListItem(itemData: any, listName?: string): Promise<any> {
+    const list = listName || sharePointConfig.listName;
+    const formDigest = await this.getFormDigest();
+
+    const response = await this.makeSharePointRequest(
+      `/_api/web/lists/getbytitle('${list}')/items`,
       {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/json;odata=verbose',
-          'Content-Type': 'application/json;odata=verbose',
           'X-RequestDigest': formDigest
         },
         body: JSON.stringify({
@@ -140,42 +189,22 @@ export class SharePointService {
       }
     );
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Erreur création: ${response.status} - ${errorText}`);
-    }
-
     const data = await response.json();
     return data.d;
   }
 
-  // Mettre à jour un élément
+  /**
+   * Mettre à jour un élément
+   */
   async updateListItem(itemId: number, itemData: any, listName?: string): Promise<any> {
-    const token = await this.getAccessToken();
     const list = listName || sharePointConfig.listName;
+    const formDigest = await this.getFormDigest();
 
-    const digestResponse = await fetch(
-      `${sharePointConfig.siteUrl}/_api/contextinfo`,
+    const response = await this.makeSharePointRequest(
+      `/_api/web/lists/getbytitle('${list}')/items(${itemId})`,
       {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/json;odata=verbose'
-        }
-      }
-    );
-
-    const digestData = await digestResponse.json();
-    const formDigest = digestData.d.GetContextWebInformation.FormDigestValue;
-
-    const response = await fetch(
-      `${sharePointConfig.siteUrl}/_api/web/lists/getbytitle('${list}')/items(${itemId})`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/json;odata=verbose',
-          'Content-Type': 'application/json;odata=verbose',
           'X-RequestDigest': formDigest,
           'IF-MATCH': '*',
           'X-HTTP-Method': 'MERGE'
@@ -187,50 +216,50 @@ export class SharePointService {
       }
     );
 
-    if (!response.ok) {
-      throw new Error(`Erreur mise à jour: ${response.status}`);
-    }
-
     return { success: true, itemId };
   }
 
-  // Supprimer un élément
+  /**
+   * Supprimer un élément
+   */
   async deleteListItem(itemId: number, listName?: string): Promise<void> {
-    const token = await this.getAccessToken();
     const list = listName || sharePointConfig.listName;
+    const formDigest = await this.getFormDigest();
 
-    const digestResponse = await fetch(
-      `${sharePointConfig.siteUrl}/_api/contextinfo`,
+    await this.makeSharePointRequest(
+      `/_api/web/lists/getbytitle('${list}')/items(${itemId})`,
       {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/json;odata=verbose'
-        }
-      }
-    );
-
-    const digestData = await digestResponse.json();
-    const formDigest = digestData.d.GetContextWebInformation.FormDigestValue;
-
-    const response = await fetch(
-      `${sharePointConfig.siteUrl}/_api/web/lists/getbytitle('${list}')/items(${itemId})`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
           'X-RequestDigest': formDigest,
           'IF-MATCH': '*',
           'X-HTTP-Method': 'DELETE'
         }
       }
     );
+  }
 
-    if (!response.ok) {
-      throw new Error(`Erreur suppression: ${response.status}`);
-    }
+  /**
+   * Récupérer toutes les listes du site
+   */
+  async getLists(): Promise<any[]> {
+    const response = await this.makeSharePointRequest('/_api/web/lists');
+    const data = await response.json();
+    return data.d.results;
+  }
+
+  /**
+   * Vérifier les permissions de l'utilisateur
+   */
+  async checkUserPermissions(): Promise<any> {
+    const response = await this.makeSharePointRequest(
+      '/_api/web/currentuser?$expand=Groups'
+    );
+    const data = await response.json();
+    return data.d;
   }
 }
 
 // Instance singleton
 export const sharePointService = new SharePointService();
+export default sharePointService;
