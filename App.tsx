@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Activity, ActivityType } from './types';
 import ActivityModal from './components/ActivityModal';
+import ConfigModal from './components/ConfigModal';
 import { ActivityService } from './services/activityService';
-import { SharePointService } from './services/sharepointService';
-import { HtmlGeneratorService } from './services/htmlGeneratorService'; // Import added
+import { FirebaseService, FirebaseConfig } from './services/firebaseService';
+import { HtmlGeneratorService } from './services/htmlGeneratorService'; 
 import { Calendar as CalendarIcon, PieChart, CheckCircle, AlertCircle, ArrowRight, LayoutGrid, ChevronLeft, ChevronRight, Upload, Plus, School, Palmtree, CalendarOff, Save, FileType, FileText, Trash2, Cloud, CloudOff, BellRing, Code, Target, Check, Utensils, LogOut, Copy, Settings, Zap, ExternalLink, Database, Wifi, WifiOff } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Cell } from 'recharts';
 
@@ -278,25 +279,6 @@ const createEmptyActivity = (date: string): Activity => ({
   backupPlan: ''
 });
 
-// Simple score calculator (duplicated from Modal for use in main view auto-enrich)
-const calculateQuickScore = (act: Activity) => {
-    let score = 0;
-    if (act.objectives.length > 0) score++;
-    if (act.youthInvolvement?.tasks?.length > 0) score++;
-    if (act.evaluationCriteria?.length > 0) score++;
-    if (!!act.startTime && !!act.endTime) score++;
-    if (!!act.logistics.venueName) score++;
-    if (!act.logistics.transportRequired || (!!act.logistics.departureTime)) score++;
-    if (act.materials.length > 0) score++;
-    if (!!act.staffing.leadStaff) score++;
-    if (!!act.staffing.requiredRatio) score++;
-    if (act.riskManagement.safetyProtocols.length > 0) score++;
-    if (!!act.riskManagement.emergencyContact) score++;
-    
-    // Total checks = 11 (approx)
-    return Math.round((score / 11) * 100);
-};
-
 const App = () => {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
@@ -309,7 +291,8 @@ const App = () => {
   // Cloud / Auth State
   const [isCloudMode, setIsCloudMode] = useState(false);
   const [userAccount, setUserAccount] = useState<any>(null);
-  const [isConfiguring, setIsConfiguring] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [showConfigModal, setShowConfigModal] = useState(false);
 
   // Detect Environment
   const isBoltEnv = typeof window !== 'undefined' && (
@@ -319,18 +302,6 @@ const App = () => {
   );
 
   const isEditorEnv = typeof window !== 'undefined' && window.location.hostname.includes('aistudio.google.com');
-
-  // URL exacte courante (sans query params, sans slash final) pour Azure
-  // NETTOYAGE: On retire le 'blob:' si présent pour l'affichage à l'utilisateur
-  const getCleanUrl = () => {
-    if (typeof window === 'undefined') return '';
-    let uri = window.location.href.split(/[?#]/)[0];
-    if (uri.startsWith('blob:')) uri = uri.substring(5);
-    return uri.endsWith('/') ? uri.slice(0, -1) : uri;
-  };
-
-  const currentRedirectUri = getCleanUrl();
-  const isBlobMode = typeof window !== 'undefined' && window.location.protocol === 'blob:';
 
   // Remove loading screen when App is mounted
   useEffect(() => {
@@ -343,85 +314,71 @@ const App = () => {
     }
   }, []);
 
-  // Initial Data Load
+  // Initial Data Load & Firebase Auth Check
   useEffect(() => {
-    loadData();
-  }, [isCloudMode]); // Reload if mode changes
+    const init = async () => {
+       if (FirebaseService.hasConfig()) {
+           FirebaseService.initialize();
+           const user = FirebaseService.getUser();
+           if (user) {
+               setUserAccount(user);
+               setIsCloudMode(true);
+           }
+       }
+       loadData();
+    };
+    init();
+  }, [isCloudMode]);
 
   const loadData = async () => {
-    const service = isCloudMode ? SharePointService : ActivityService;
+    const service = isCloudMode ? FirebaseService : ActivityService;
     try {
         const data = await service.getAll();
         setActivities(data.length > 0 ? data : (isCloudMode ? [] : INITIAL_ACTIVITIES));
     } catch (e) {
         console.error("Erreur chargement", e);
         if (isCloudMode) {
-            // Si erreur en mode cloud, on vérifie si c'est un problème de config
-            if (SharePointService.getConfig() === null) {
-                // Pas d'alerte ici, on attend l'interaction user
-            } else {
-                alert("Erreur de synchronisation Cloud. Vérifiez votre connexion.");
-            }
+            alert("Erreur de synchronisation Firebase. Vérifiez votre connexion.");
         }
     }
   };
 
-  const handleMicrosoftLogin = async () => {
-      setIsConfiguring(true);
-      try {
-          // 1. Connexion
-          const account = await SharePointService.login();
-          setUserAccount(account);
+  const handleConnectClick = async () => {
+      if (isCloudMode) {
+          // Déconnexion
+          await FirebaseService.logout();
+          setUserAccount(null);
+          setIsCloudMode(false);
+          // Optionnel : Reset la config si on veut changer de projet
+          // FirebaseService.resetConfig(); 
+          window.location.reload();
+          return;
+      }
 
-          // 2. Vérification Configuration
-          const config = SharePointService.getConfig();
-          
-          if (!config) {
-             // 3. Auto-Configuration si manquant
-             const siteName = prompt("CONFIGURATION INITIALE :\nEntrez le nom de votre site SharePoint (ex: 'Direction', 'MDJ', 'Equipe').\nLe système va chercher le site et créer la liste automatiquement.");
-             
-             if (siteName) {
-                 const success = await SharePointService.autoConfigure(siteName);
-                 if (success) {
-                     alert("✅ Configuration réussie ! La base de données est prête.");
-                     setIsCloudMode(true);
-                 } else {
-                     // Echec config
-                     setUserAccount(null);
-                 }
-             } else {
-                 alert("Configuration annulée.");
-             }
-          } else {
-              // Config existe déjà
-              setIsCloudMode(true);
+      // Connexion
+      if (!FirebaseService.hasConfig()) {
+          setShowConfigModal(true);
+      } else {
+          try {
+              setIsLoading(true);
+              const user = await FirebaseService.login();
+              if (user) {
+                  setUserAccount(user);
+                  setIsCloudMode(true);
+              }
+          } catch (e) {
+              alert("Erreur de connexion Google.");
+          } finally {
+              setIsLoading(false);
           }
-      } catch (e: any) {
-          if (e.message === "CANCELLED") {
-             // L'utilisateur a fermé la fenêtre.
-             // On log simplement l'info pour le debug sans effrayer l'utilisateur.
-             console.log("Connexion annulée par l'utilisateur.");
-          } else {
-             console.error(e);
-             // alert("La connexion Microsoft a échoué.");
-          }
-      } finally {
-          setIsConfiguring(false);
       }
   };
 
-  const handleCopyRedirectUri = () => {
-     const uri = currentRedirectUri;
-     navigator.clipboard.writeText(uri).then(() => {
-        alert(`ADRESSE COPIÉE !\n\n${uri}\n\n1. Allez dans le portail Azure.\n2. Cliquez sur 'Ajouter un URI de redirection'.\n3. Collez cette adresse.`);
-     });
-  };
-
-  const handleLogout = async () => {
-      await SharePointService.logout();
-      setUserAccount(null);
-      setIsCloudMode(false);
-      window.location.reload();
+  const handleConfigSave = async (config: FirebaseConfig) => {
+      FirebaseService.saveConfig(config);
+      setShowConfigModal(false);
+      // Auto-trigger login
+      handleConnectClick();
   };
 
   const getDaysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
@@ -440,7 +397,7 @@ const App = () => {
   const startPadding = getFirstDayOfMonth(currentDate.getFullYear(), currentDate.getMonth());
   
   const handleSaveActivity = async (activityToSave: Activity) => {
-    const service = isCloudMode ? SharePointService : ActivityService;
+    const service = isCloudMode ? FirebaseService : ActivityService;
     
     // Update State Optimistically
     setActivities(prev => {
@@ -455,7 +412,7 @@ const App = () => {
     try {
         await service.save(activityToSave);
     } catch (e) {
-        alert("Erreur lors de la sauvegarde cloud. Vérifiez votre connexion.");
+        alert("Erreur lors de la sauvegarde cloud.");
     }
     
     setSelectedActivity(null);
@@ -464,19 +421,12 @@ const App = () => {
   const handleDeleteActivity = async (activityId: string) => {
       if(!confirm("Supprimer cette activité ?")) return;
       
-      const act = activities.find(a => a.id === activityId);
-      
       // Optimistic delete
       setActivities(prev => prev.filter(a => a.id !== activityId));
       setSelectedActivity(null);
 
-      const service = isCloudMode ? SharePointService : ActivityService;
-      if (isCloudMode && act) {
-          // Need sharepoint ID
-          await SharePointService.delete(activityId, (act as any).sharepointId);
-      } else {
-          await ActivityService.delete(activityId);
-      }
+      const service = isCloudMode ? FirebaseService : ActivityService;
+      await service.delete(activityId);
   };
 
   // --- DRAG AND DROP HANDLERS ---
@@ -504,7 +454,7 @@ const App = () => {
         setActivities(prev => prev.map(a => a.id === draggedActivityId ? updatedActivity : a));
         
         // Persist
-        const service = isCloudMode ? SharePointService : ActivityService;
+        const service = isCloudMode ? FirebaseService : ActivityService;
         await service.save(updatedActivity);
     }
     setDraggedActivityId(null);
@@ -526,7 +476,9 @@ const App = () => {
   // --- RESET HANDLER ---
   const handleReset = async () => {
     if (isCloudMode) {
-        alert("La réinitialisation globale est désactivée en mode Cloud pour protéger les données partagées.");
+        if(confirm("ATTENTION: En mode Firebase, ceci effacera votre configuration locale et vous déconnectera.\n\n(Les données sur le serveur ne seront pas effacées).")) {
+             FirebaseService.resetConfig();
+        }
         return;
     }
     if(confirm("ATTENTION: Voulez-vous vraiment effacer toutes les données locales et recommencer à zéro ?")) {
@@ -610,7 +562,7 @@ const App = () => {
         {isEditorEnv && (
            <div className="bg-red-500 text-white px-4 py-2 text-center text-xs font-bold uppercase tracking-wider flex items-center justify-center gap-2">
               <AlertCircle className="w-4 h-4" />
-              Attention: Vous êtes dans l'éditeur. La connexion Microsoft ne fonctionnera pas ici. Ouvrez l'aperçu dans un nouvel onglet.
+              Attention: Vous êtes dans l'éditeur. Ouvrez l'aperçu dans un nouvel onglet.
            </div>
         )}
         <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
@@ -637,27 +589,27 @@ const App = () => {
 
              {/* Connection Status Indicator / Toggle */}
             <button
-                onClick={isCloudMode ? handleLogout : handleMicrosoftLogin}
-                disabled={isConfiguring}
+                onClick={handleConnectClick}
+                disabled={isLoading}
                 className={`flex items-center gap-2 px-4 py-2 rounded-full border transition-all text-xs font-bold uppercase tracking-wider ${
                     isCloudMode 
                     ? 'bg-green-500/10 text-green-400 border-green-500/30 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/30' 
                     : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10'
-                } ${isConfiguring ? 'opacity-50 cursor-wait' : ''}`}
-                title={isCloudMode ? "Déconnecter de SharePoint" : "Connecter à SharePoint"}
+                } ${isLoading ? 'opacity-50 cursor-wait' : ''}`}
+                title={isCloudMode ? "Déconnecter de Firebase" : "Connecter à Firebase"}
             >
-                {isConfiguring ? (
+                {isLoading ? (
                     <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
                 ) : isCloudMode ? (
                     <>
                         <Database className="w-4 h-4" />
-                        <span className="hidden md:inline">EN LIGNE</span>
+                        <span className="hidden md:inline">FIREBASE ACTIF</span>
                         <Check className="w-3 h-3 ml-1" />
                     </>
                 ) : (
                     <>
                         <Database className="w-4 h-4 opacity-50" />
-                        <span className="hidden md:inline">HORS LIGNE</span>
+                        <span className="hidden md:inline">LOCAL SEULEMENT</span>
                     </>
                 )}
             </button>
@@ -671,7 +623,7 @@ const App = () => {
               <span>Prêts: {preparedCount}/{displayedActivities.length}</span>
             </div>
             
-            <button onClick={handleReset} className={`p-2 rounded-full transition-colors ${isCloudMode ? 'text-gray-600 cursor-not-allowed' : 'text-red-500 hover:bg-red-500/10'}`} title="Réinitialiser tout">
+            <button onClick={handleReset} className={`p-2 rounded-full transition-colors ${isCloudMode ? 'text-gray-600 hover:text-red-500' : 'text-red-500 hover:bg-red-500/10'}`} title="Réinitialiser">
                 <Trash2 className="w-5 h-5" />
             </button>
           </div>
@@ -837,6 +789,13 @@ const App = () => {
           </div>
         </div>
       </main>
+
+      {showConfigModal && (
+        <ConfigModal 
+          onSave={handleConfigSave} 
+          onClose={() => setShowConfigModal(false)} 
+        />
+      )}
 
       {selectedActivity && <ActivityModal activity={selectedActivity} onClose={() => setSelectedActivity(null)} onSave={handleSaveActivity} />}
     </div>
