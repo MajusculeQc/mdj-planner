@@ -100,29 +100,30 @@
       @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; } }
     </style>
 
-    <!-- Import Map REACT 18 (Compatible with lucide-react 0.344.0) -->
+    <!-- Import Map CORRIGÉ avec gstatic.com pour éviter les conflits -->
     <script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@18.2.0",
-    "react-dom": "https://esm.sh/react-dom@18.2.0?deps=react@18.2.0",
-    "react-dom/client": "https://esm.sh/react-dom@18.2.0/client?deps=react@18.2.0",
-    "lucide-react": "https://esm.sh/lucide-react@0.344.0?deps=react@18.2.0",
-    "recharts": "https://esm.sh/recharts@2.12.0?deps=react@18.2.0,react-dom@18.2.0",
-    "pdfjs-dist": "https://esm.sh/pdfjs-dist@4.0.379",
-    "mammoth": "https://esm.sh/mammoth@1.7.1",
-    "react-dom/": "https://esm.sh/react-dom@^18.2.0/",
-    "react/": "https://esm.sh/react@^18.2.0/",
-    "@google/genai": "https://esm.sh/@google/genai",
-    "firebase/app": "https://esm.sh/firebase@10.8.0/app",
-    "firebase/auth": "https://esm.sh/firebase@10.8.0/auth",
-    "firebase/firestore": "https://esm.sh/firebase@10.8.0/firestore",
-    "firebase/": "https://esm.sh/firebase@^12.8.0/",
-    "@microsoft/microsoft-graph-client": "https://esm.sh/@microsoft/microsoft-graph-client@^3.0.7",
-    "@azure/msal-browser": "https://esm.sh/@azure/msal-browser@^5.1.0"
-  }
-}
-</script>
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom": "https://esm.sh/react-dom@18.2.0?deps=react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client?deps=react@18.2.0",
+        "lucide-react": "https://esm.sh/lucide-react@0.344.0?deps=react@18.2.0",
+        "recharts": "https://esm.sh/recharts@2.12.0?deps=react@18.2.0,react-dom@18.2.0",
+        "pdfjs-dist": "https://esm.sh/pdfjs-dist@4.0.379",
+        "mammoth": "https://esm.sh/mammoth@1.7.1",
+        "react-dom/": "https://esm.sh/react-dom@^18.2.0/",
+        "react/": "https://esm.sh/react@^18.2.0/",
+        "@google/genai": "https://esm.sh/@google/genai",
+        "firebase/app": "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js",
+        "firebase/auth": "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js",
+        "firebase/firestore": "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js",
+        "firebase/analytics": "https://www.gstatic.com/firebasejs/10.8.0/firebase-analytics.js",
+        "firebase/": "https://www.gstatic.com/firebasejs/10.8.0/",
+        "@azure/msal-browser": "https://esm.sh/@azure/msal-browser@^5.1.0",
+        "@microsoft/microsoft-graph-client": "https://esm.sh/@microsoft/microsoft-graph-client@^3.0.7"
+      }
+    }
+    </script>
   </head>
   
   <body>
@@ -130,14 +131,8 @@
     <div id="loading-screen" class="loading-screen">
       <div class="spinner-large" id="loading-spinner"></div>
       <p id="loading-text" style="margin-top: 2rem; font-size: 1.25rem; color: #94a3b8;">
-        Chargement de l'application...
+        Initialisation du système...
       </p>
-      <div id="loading-actions" style="display: none; margin-top: 1rem; flex-direction: column; gap: 10px; align-items: center;">
-        <button onclick="window.location.reload()" style="padding: 10px 20px; background: #00FFFF; color: #0f172a; border: none; border-radius: 8px; font-weight: bold; cursor: pointer;">
-          Réessayer
-        </button>
-        <p style="font-size: 0.8rem; color: #64748b;">Si le problème persiste, vérifiez votre connexion.</p>
-      </div>
     </div>
 
     <!-- Main App Container -->
@@ -151,75 +146,9 @@
       </div>
     </noscript>
 
-    <!-- Loading Timeout Failsafe -->
-    <script>
-      // Force remove loading screen if it hangs for more than 8 seconds
-      setTimeout(() => {
-        const loadingScreen = document.getElementById('loading-screen');
-        const loadingText = document.getElementById('loading-text');
-        const loadingSpinner = document.getElementById('loading-spinner');
-        const loadingActions = document.getElementById('loading-actions');
-        
-        // Only run if loading screen is still visible and app hasn't mounted
-        if (loadingScreen && document.getElementById('root').childElementCount === 0) {
-          if (loadingText) loadingText.innerText = "Le chargement prend plus de temps que prévu...";
-          if (loadingText) loadingText.style.color = "#FF7A59";
-          if (loadingActions) loadingActions.style.display = "flex";
-          if (loadingSpinner) loadingSpinner.style.borderColor = "rgba(255, 122, 89, 0.3)";
-          if (loadingSpinner) loadingSpinner.style.borderTopColor = "#FF7A59";
-          console.warn("⚠️ Loading timeout reached.");
-        }
-      }, 8000);
-    </script>
-
-    <!-- Global Error Handler -->
-    <script>
-      window.addEventListener('error', (event) => {
-        console.error('[Global Error]:', event.error);
-        
-        // If error happens during initial load, update loading screen
-        const loadingScreen = document.getElementById('loading-screen');
-        if (loadingScreen && document.getElementById('root').childElementCount === 0) {
-           const loadingText = document.getElementById('loading-text');
-           const loadingActions = document.getElementById('loading-actions');
-           if (loadingText) {
-             loadingText.innerText = `Erreur: ${event.message || "Problème d'initialisation"}`;
-             loadingText.style.color = "#ef4444";
-           }
-           if (loadingActions) loadingActions.style.display = "flex";
-           return;
-        }
-
-        if (event.error && !event.error.toString().includes('ResizeObserver')) {
-          const notification = document.createElement('div');
-          notification.style.cssText = `position: fixed; top: 20px; right: 20px; background: #ef4444; color: white; padding: 16px; border-radius: 12px; z-index: 10000;`;
-          notification.innerText = `Erreur: ${event.error.message}`;
-          document.body.appendChild(notification);
-          setTimeout(() => notification.remove(), 5000);
-        }
-      });
-      
-      // Performance monitoring
-      if (window.performance && window.performance.timing) {
-        window.addEventListener('load', () => {
-          const timing = window.performance.timing;
-          console.log(`📊 Page chargée en ${timing.loadEventEnd - timing.navigationStart}ms`);
-        });
-      }
-    </script>
-
     <!-- Main Application Script -->
     <script type="module">
         import '/index.tsx';
-    </script>
-
-    <!-- Service Worker -->
-    <script>
-      if ('serviceWorker' in navigator && window.location.protocol === 'https:') {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/service-worker.js').catch(err => console.log('SW Fail:', err));
-        });
-      }
     </script>
   </body>
 </html>

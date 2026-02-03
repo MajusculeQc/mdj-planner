@@ -9,9 +9,8 @@ interface Props {
   onSave: (updated: Activity) => void;
 }
 
-const STAFF_LIST = ["Sébastien Johnson", "Laurie Bray Pratte", "Charles Frenette", "Mikael Delage", "Patrick Delage", "Ann-Sushi (Stagiaire)"];
+const STAFF_LIST = ["Charles Frenette", "Laurie Bray Pratte", "Mikael Delage", "Ann-Sushi (Stagiaire)", "Patrick Delage", "Sébastien Johnson"];
 
-// --- BANQUE DE SUGGESTIONS PAR DÉFAUT ---
 const SUGGESTIONS: Record<string, string[]> = {
   objectives: [
     "Développer l'esprit critique",
@@ -20,7 +19,8 @@ const SUGGESTIONS: Record<string, string[]> = {
     "Saines habitudes de vie",
     "Estime de soi",
     "Ouverture sur la communauté",
-    "Gestion des émotions"
+    "Gestion des émotions",
+    "Ouverture culturelle"
   ],
   tasks: [
     "Préparation de la salle",
@@ -29,7 +29,9 @@ const SUGGESTIONS: Record<string, string[]> = {
     "Responsable de la musique",
     "Prise de photos",
     "Nettoyage et rangement",
-    "Gestion des collations"
+    "Gestion des collations",
+    "Cuisine collective",
+    "Maître de jeu (RPG)"
   ],
   evaluation: [
     "Niveau de participation active",
@@ -47,7 +49,8 @@ const SUGGESTIONS: Record<string, string[]> = {
     "Collations / Repas",
     "Tablettes/Caméra",
     "Jeux de société",
-    "Matériel d'art"
+    "Matériel d'art",
+    "Équipement de sport"
   ],
   hazards: [
     "Chute ou glissade",
@@ -65,7 +68,8 @@ const SUGGESTIONS: Record<string, string[]> = {
     "Vérification des antécédents médicaux",
     "Respect du Code de vie",
     "Port de l'équipement de sécurité",
-    "Système de jumelage (Buddy system)"
+    "Système de jumelage (Buddy system)",
+    "Supervision cuisine"
   ],
   compliance: [
     "Formulaire de consentement signé",
@@ -96,7 +100,6 @@ const SUGGESTIONS: Record<string, string[]> = {
   ]
 };
 
-// Liste combinée par défaut pour le personnel de soutien (Employés + Rôles génériques)
 const DEFAULT_SUPPORT_STAFF = [
   ...STAFF_LIST,
   "Stagiaire", 
@@ -109,11 +112,8 @@ const DEFAULT_SUPPORT_STAFF = [
 const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, onSave }) => {
   const [activity, setActivity] = useState<Activity>(initialActivity);
   const [activeTab, setActiveTab] = useState<'checklist' | 'pedagogy' | 'logistics' | 'materials' | 'risk' | 'staff' | 'budget'>('checklist');
-
-  // État global pour toutes les suggestions personnalisées
   const [customSuggestions, setCustomSuggestions] = useState<Record<string, string[]>>({});
 
-  // Chargement des suggestions personnalisées au démarrage
   useEffect(() => {
     const loaded: Record<string, string[]> = {};
     const keys = [...Object.keys(SUGGESTIONS), 'supportStaff'];
@@ -129,7 +129,6 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
     setCustomSuggestions(loaded);
   }, []);
 
-  // Calculate score dynamically based on RMJQ standards
   const calculateReadiness = () => {
     let score = 0;
     let totalChecks = 0;
@@ -141,28 +140,17 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
       checks.push({ label, met: condition, tab });
     };
 
-    // RMJQ Core: Sens & Pédagogie
     addCheck("Objectifs (Critique/Actif/Responsable)", activity.objectives.length > 0, 'pedagogy');
     addCheck("Implication des jeunes définie", activity.youthInvolvement?.tasks?.length > 0, 'pedagogy');
     addCheck("Critères d'évaluation définis", activity.evaluationCriteria?.length > 0, 'pedagogy');
-
-    // Logistics & Safety
     addCheck("Horaires définis", !!activity.startTime && !!activity.endTime, 'logistics');
     addCheck("Lieu et transport validés", !!activity.logistics.venueName && (!activity.logistics.transportRequired || !!activity.logistics.transportMode), 'logistics');
     addCheck("Heures transport définies", !activity.logistics.transportRequired || (!!activity.logistics.departureTime && !!activity.logistics.returnTime), 'logistics');
     addCheck("Matériel listé", activity.materials.length > 0, 'materials'); 
-    
-    // Staffing & Relations
     addCheck("Adultes significatifs désignés", !!activity.staffing.leadStaff, 'staff');
     addCheck("Ratio d'encadrement respecté", !!activity.staffing.requiredRatio, 'staff');
-
-    // Risk
     addCheck("Risques & Code de vie", activity.riskManagement.safetyProtocols.length > 0, 'risk');
     addCheck("Contact d'urgence", !!activity.riskManagement.emergencyContact, 'risk');
-    // Check for compliance if rules exist
-    if (activity.riskManagement.complianceRequirements && activity.riskManagement.complianceRequirements.length > 0) {
-        addCheck("Obligations administratives validées", true, 'risk');
-    }
 
     return {
       percentage: totalChecks === 0 ? 0 : Math.round((score / totalChecks) * 100),
@@ -176,10 +164,8 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
     setActivity(prev => ({ ...prev, preparationScore: readiness.percentage }));
   }, [JSON.stringify(activity)]);
 
-  // --- LOGIQUE DE SAUVEGARDE GÉNÉRALISÉE ---
   const updateCustomList = (key: string, currentValues: string[], defaultValues: string[]) => {
     const existingCustom = customSuggestions[key] || [];
-    // Filtrer: non vide, pas dans les défauts, pas déjà dans custom
     const newValues = currentValues
       .map(v => v ? v.trim() : "")
       .filter(v => v !== "" && !defaultValues.includes(v) && !existingCustom.includes(v));
@@ -196,37 +182,17 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
   };
 
   const handleSaveInternal = () => {
-      // 1. Support Staff
       updateCustomList('supportStaff', activity.staffing.supportStaff, DEFAULT_SUPPORT_STAFF);
-
-      // 2. Objectifs
       updateCustomList('objectives', activity.objectives, SUGGESTIONS.objectives);
-
-      // 3. Tâches Jeunes
       updateCustomList('tasks', activity.youthInvolvement.tasks || [], SUGGESTIONS.tasks);
-
-      // 4. Évaluation
       updateCustomList('evaluation', activity.evaluationCriteria || [], SUGGESTIONS.evaluation);
-
-      // 5. Matériel (items)
       updateCustomList('materials', activity.materials.map(m => m.item), SUGGESTIONS.materials);
-
-      // 6. Risques (Hazards)
       updateCustomList('hazards', activity.riskManagement.hazards, SUGGESTIONS.hazards);
-
-      // 7. Protocoles
       updateCustomList('protocols', activity.riskManagement.safetyProtocols, SUGGESTIONS.protocols);
-
-      // 8. Règlements Site
       updateCustomList('siteRules', activity.riskManagement.siteRules || [], SUGGESTIONS.siteRules);
-
-      // 9. Conformité
       updateCustomList('compliance', activity.riskManagement.complianceRequirements || [], SUGGESTIONS.compliance);
-
-      // 10. Budget (descriptions)
       updateCustomList('budget', activity.budget.items.map(i => i.description), SUGGESTIONS.budget);
-
-      // 11. Qualifications (split string)
+      
       const qualifs = activity.staffing.specialQualifications 
           ? activity.staffing.specialQualifications.split(',').map(s => s.trim()) 
           : [];
@@ -235,18 +201,14 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
       onSave(activity);
   };
 
-  // Helper pour combiner les listes par défaut et personnalisées dans l'affichage
   const getCombinedList = (key: string, defaultList: string[]) => {
       const custom = customSuggestions[key] || [];
-      // Set pour dédupliquer visuellement
       return Array.from(new Set([...defaultList, ...custom]));
   };
 
-  // --- UI HELPERS ---
   const inputClass = "w-full bg-mdj-black border border-white/10 rounded-lg p-2 text-white focus:ring-1 focus:ring-mdj-cyan focus:border-mdj-cyan placeholder-gray-600 transition-all";
   const labelClass = "text-xs font-bold text-mdj-cyan uppercase tracking-wider mb-1 block";
 
-  // Composant interne pour les suggestions
   const QuickSuggestions = ({ list, onSelect, colorClass = "bg-white/5 text-gray-400 hover:text-white border-white/10" }: { list: string[], onSelect: (val: string) => void, colorClass?: string }) => (
     <div className="flex flex-wrap gap-2 mb-3">
         {list.map((item, i) => (
@@ -265,10 +227,8 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
     <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 p-4 overflow-y-auto">
       <div className="bg-mdj-dark border border-white/10 rounded-3xl w-full max-w-6xl max-h-[95vh] shadow-[0_0_50px_rgba(0,0,0,0.5)] flex flex-col relative overflow-hidden">
         
-        {/* Glow effect */}
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-mdj-cyan via-mdj-magenta to-mdj-orange"></div>
 
-        {/* Header */}
         <div className="p-6 border-b border-white/10 flex justify-between items-start bg-mdj-dark">
           <div className="flex-1 mr-6">
             <div className="flex items-center gap-4 mb-2 w-full">
@@ -296,9 +256,7 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                   ))}
                 </select>
               </div>
-              
               <span className="text-white/20">•</span>
-              
               <div className="flex items-center hover:text-white transition-colors">
                 <input 
                   type="date"
@@ -307,9 +265,7 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                   onChange={(e) => setActivity({...activity, date: e.target.value})}
                 />
               </div>
-
               <span className="text-white/20">•</span>
-              
               <span className="flex items-center gap-1 font-bold text-white bg-white/5 px-2 py-0.5 rounded border border-white/10">
                 <Clock className="w-3 h-3 text-mdj-magenta"/> {activity.startTime} - {activity.endTime}
               </span>
@@ -323,7 +279,6 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
         </div>
 
         <div className="flex flex-1 overflow-hidden">
-          {/* Sidebar / Tabs */}
           <div className="w-64 bg-mdj-black/50 border-r border-white/10 flex flex-col overflow-y-auto shrink-0">
              <nav className="p-4 space-y-1">
                {[
@@ -349,8 +304,6 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                 </button>
               ))}
              </nav>
-             
-             {/* RMJQ Reminder */}
              <div className="mt-auto p-6 bg-gradient-to-t from-mdj-cyan/10 to-transparent border-t border-white/5">
                <h4 className="text-xs font-bold text-mdj-cyan uppercase mb-2">Mission La Piaule</h4>
                <p className="text-xs text-gray-400 leading-relaxed font-light">
@@ -359,15 +312,12 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
              </div>
           </div>
 
-          {/* Main Content Area */}
           <div className="flex-1 overflow-y-auto bg-mdj-dark p-8 custom-scrollbar">
-            
             {activeTab === 'checklist' && (
               <div className="space-y-8 max-w-4xl mx-auto animate-in fade-in duration-300">
                 <div className="flex justify-between items-center">
                   <h3 className="font-display font-bold text-white text-xl">Liste de vérification RMJQ</h3>
                 </div>
-                
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                    <div className="col-span-2 bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-lg">
                       <div className="grid grid-cols-1 gap-3">
@@ -392,13 +342,11 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                         ))}
                       </div>
                    </div>
-                   
                    <div className="space-y-6">
                       <div className="bg-gradient-to-br from-mdj-cyan to-blue-600 rounded-2xl p-6 text-black text-center shadow-[0_0_20px_rgba(0,255,255,0.3)]">
                         <div className="text-5xl font-black mb-1 tracking-tighter">{readiness.percentage}%</div>
                         <div className="text-black/60 text-sm font-bold uppercase tracking-widest">Niveau de préparation</div>
                       </div>
-                      
                       <div className="bg-mdj-black/30 rounded-2xl p-6 border border-white/10">
                         <h4 className="font-bold text-white mb-3 text-sm flex items-center gap-2"><BrainCircuit className="w-4 h-4 text-mdj-magenta"/> Dimensions</h4>
                         <div className="flex flex-wrap gap-2">
@@ -418,7 +366,6 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
 
             {activeTab === 'pedagogy' && (
               <div className="space-y-8 max-w-4xl mx-auto animate-in fade-in duration-300">
-                {/* Description */}
                 <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm relative overflow-hidden group">
                   <div className="absolute top-0 left-0 w-1 h-full bg-mdj-cyan shadow-[0_0_10px_#00FFFF]"></div>
                   <label className="block text-sm font-bold text-gray-400 mb-2 uppercase tracking-wide">Description de l'activité</label>
@@ -430,9 +377,7 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                     rows={3}
                   />
                 </div>
-
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                  {/* Objectifs RMJQ */}
                   <div className="bg-mdj-black/30 rounded-2xl border border-white/10 shadow-sm overflow-hidden flex flex-col">
                     <div className="bg-white/5 px-6 py-4 border-b border-white/10">
                       <h3 className="font-bold text-white flex items-center gap-2">
@@ -472,8 +417,6 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                       </button>
                     </div>
                   </div>
-
-                  {/* Par et Pour les jeunes */}
                   <div className="bg-mdj-black/30 rounded-2xl border border-white/10 shadow-sm overflow-hidden flex flex-col">
                     <div className="bg-white/5 px-6 py-4 border-b border-white/10">
                       <h3 className="font-bold text-white flex items-center gap-2">
@@ -538,18 +481,14 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                     </div>
                   </div>
                 </div>
-
-                {/* Evaluation */}
                 <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm">
                   <label className="block text-sm font-bold text-white mb-2">Critères d'évaluation (Bilan)</label>
                   <p className="text-xs text-gray-500 mb-3">Comment saurons-nous si l'activité a été un succès éducatif ?</p>
-                  
                   <QuickSuggestions 
                      list={getCombinedList('evaluation', SUGGESTIONS.evaluation)}
                      onSelect={(val) => setActivity({...activity, evaluationCriteria: [...(activity.evaluationCriteria || []), val]})}
                      colorClass="bg-mdj-yellow/10 text-mdj-yellow border-mdj-yellow/30 hover:bg-mdj-yellow hover:text-black"
                   />
-
                   <div className="space-y-2">
                     {(activity.evaluationCriteria || []).map((crit, i) => (
                       <div key={i} className="flex gap-2">
@@ -592,9 +531,7 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                           <input type="time" className={inputClass} value={activity.endTime} onChange={e => setActivity({...activity, endTime: e.target.value})} />
                         </div>
                       </div>
-                      
                       <hr className="border-white/5 my-4"/>
-
                       <h3 className="font-bold text-white mb-4 flex items-center gap-2"><MapPin className="w-5 h-5 text-mdj-cyan"/> Lieu & Rendez-vous</h3>
                       <div className="space-y-4">
                         <div className="flex justify-between items-end">
@@ -656,7 +593,6 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                         </div>
                       </div>
                    </div>
-
                    <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm">
                       <div className="flex justify-between items-center mb-4">
                         <h3 className="font-bold text-white flex items-center gap-2"><Truck className="w-5 h-5 text-mdj-cyan"/> Transport</h3>
@@ -665,7 +601,6 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                           <span className="text-sm font-medium text-white">Requis</span>
                         </label>
                       </div>
-                      
                       {activity.logistics.transportRequired ? (
                         <div className="space-y-4 animate-in fade-in slide-in-from-top-2">
                            <div className="bg-mdj-cyan/5 p-4 rounded-xl border border-mdj-cyan/20">
@@ -679,7 +614,6 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                                     value={activity.logistics.departureTime || ''} 
                                     onChange={e => setActivity({...activity, logistics: {...activity.logistics, departureTime: e.target.value}})} 
                                   />
-                                  <span className="text-[10px] text-gray-500">Présence</span>
                                 </div>
                                 <div>
                                   <label className="text-[10px] font-bold text-mdj-cyan/70 uppercase">Retour (Arrivée)</label>
@@ -689,18 +623,16 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                                     value={activity.logistics.returnTime || ''} 
                                     onChange={e => setActivity({...activity, logistics: {...activity.logistics, returnTime: e.target.value}})} 
                                   />
-                                  <span className="text-[10px] text-gray-500">MDJ</span>
                                 </div>
                               </div>
                            </div>
-                           
                            <hr className="border-white/5"/>
-
                            <div>
                             <label className={labelClass}>Mode de transport</label>
                             <select className={inputClass} value={activity.logistics.transportMode} onChange={e => setActivity({...activity, logistics: {...activity.logistics, transportMode: e.target.value}})}>
                               <option value="">Sélectionner...</option>
                               <option>Véhicules des intervenants</option>
+                              <option>Autobus</option>
                               <option>À pied</option>
                             </select>
                           </div>
@@ -742,7 +674,6 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                         colorClass="bg-white/10 text-gray-300 border-white/20 hover:bg-white/20"
                     />
                 </div>
-                
                 <table className="w-full">
                   <thead>
                     <tr className="text-left text-xs font-bold text-gray-500 uppercase border-b border-white/10 tracking-wider">
@@ -804,8 +735,6 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
 
             {activeTab === 'risk' && (
                <div className="space-y-6 max-w-4xl mx-auto animate-in fade-in duration-300">
-                 
-                 {/* Nouveau bloc Conformité / Règlements */}
                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm">
                        <h3 className="flex items-center gap-2 font-bold text-white mb-4">
@@ -841,7 +770,6 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                            >+ Ajouter un règlement manuellement</button>
                        </div>
                     </div>
-
                     <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm">
                        <h3 className="flex items-center gap-2 font-bold text-white mb-4">
                            <FileText className="w-5 h-5 text-mdj-cyan"/> Obligations Administratives
@@ -877,7 +805,6 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                        </div>
                     </div>
                  </div>
-
                  <div className="bg-mdj-orange/10 p-6 rounded-2xl border border-mdj-orange/20 shadow-sm">
                    <h3 className="flex items-center gap-2 font-bold text-mdj-orange mb-4"><ShieldAlert className="w-5 h-5"/> Analyse de Risques</h3>
                    <QuickSuggestions 
@@ -911,16 +838,13 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                      </button>
                    </div>
                  </div>
-
                  <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm">
                       <label className="block text-sm font-bold text-white mb-4">Protocoles de sécurité & Code de vie</label>
-                      
                       <QuickSuggestions 
                             list={getCombinedList('protocols', SUGGESTIONS.protocols)}
                             onSelect={(val) => setActivity({...activity, riskManagement: {...activity.riskManagement, safetyProtocols: [...activity.riskManagement.safetyProtocols, val]}})}
                             colorClass="bg-green-500/10 text-green-400 border-green-500/30 hover:bg-green-500/20"
                       />
-
                       <div className="space-y-3">
                         {activity.riskManagement.safetyProtocols.map((proto, idx) => (
                           <div key={idx} className="flex gap-3 items-start group">
@@ -946,7 +870,6 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                         >+ Ajouter manuellement</button>
                       </div>
                    </div>
-
                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                    <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm">
                       <label className={labelClass}>Assurances & Autorisations</label>
@@ -985,10 +908,8 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                     </span>
                   </div>
                 </div>
-
                 <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm">
                   <h3 className="font-bold text-white mb-4 flex items-center gap-2"><DollarSign className="w-5 h-5 text-mdj-yellow"/> Postes budgétaires</h3>
-                  
                   <QuickSuggestions 
                      list={getCombinedList('budget', SUGGESTIONS.budget)} 
                      onSelect={(val) => {
@@ -997,7 +918,6 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                      }}
                      colorClass="bg-mdj-yellow/10 text-mdj-yellow border-mdj-yellow/30"
                   />
-
                   <div className="space-y-2">
                     {activity.budget.items.map((item, idx) => (
                        <div key={idx} className="flex justify-between items-center py-3 px-4 bg-white/5 rounded-xl border border-white/5 group hover:bg-white/10 transition-colors">
@@ -1058,24 +978,19 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                         <datalist id="staffList">
                           {STAFF_LIST.map(staff => <option key={staff} value={staff} />)}
                         </datalist>
-                        <p className="text-xs text-gray-500 mt-1">Responsable du lien de confiance</p>
                       </div>
                       <div>
                         <label className={labelClass}>Ratio requis</label>
                         <input className={inputClass} value={activity.staffing.requiredRatio} onChange={e => setActivity({...activity, staffing: {...activity.staffing, requiredRatio: e.target.value}})} />
-                        <p className="text-xs text-gray-500 mt-1">Selon normes RMJQ</p>
                       </div>
                    </div>
                    <div className="mt-8">
                       <label className={labelClass}>Personnel de soutien</label>
-                      
-                      {/* Suggestions combinées : Défaut + Employés + Custom */}
                       <QuickSuggestions 
                             list={getCombinedList('supportStaff', DEFAULT_SUPPORT_STAFF)}
                             onSelect={(val) => setActivity({...activity, staffing: {...activity.staffing, supportStaff: [...activity.staffing.supportStaff, val]}})}
                             colorClass="bg-white/5 border-white/10 hover:bg-white/10"
                       />
-
                       <div className="space-y-2 mt-4">
                          {activity.staffing.supportStaff.map((staff, idx) => (
                            <div key={idx} className="flex gap-2 items-center">
@@ -1103,13 +1018,11 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                    </div>
                    <div className="mt-8 p-4 bg-mdj-yellow/5 rounded-xl border border-mdj-yellow/20">
                       <label className="text-xs font-bold text-mdj-yellow uppercase mb-2 block">Qualifications requises</label>
-                      
                       <QuickSuggestions 
                             list={getCombinedList('qualifications', SUGGESTIONS.qualifications)}
                             onSelect={(val) => setActivity({...activity, staffing: {...activity.staffing, specialQualifications: (activity.staffing.specialQualifications ? activity.staffing.specialQualifications + ", " : "") + val}})}
                             colorClass="bg-mdj-yellow/10 border-mdj-yellow/20 hover:bg-mdj-yellow/20 text-mdj-yellow"
                       />
-
                       <input 
                         className="w-full bg-transparent border-b border-mdj-yellow/30 p-2 text-sm text-white focus:ring-0 placeholder-gray-500 mt-2" 
                         value={activity.staffing.specialQualifications || ""}
@@ -1120,11 +1033,8 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
                  </div>
                </div>
             )}
-
           </div>
         </div>
-
-        {/* Footer */}
         <div className="p-4 border-t border-white/10 flex justify-between items-center bg-mdj-dark">
           <div className="text-xs text-gray-500 pl-2">
             MDJ L'Escale Jeunesse - La Piaule
@@ -1137,7 +1047,6 @@ const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, on
             >
               <Printer className="w-4 h-4" /> <span className="hidden sm:inline">Imprimer Fiche</span>
             </button>
-
             <button onClick={onClose} className="px-6 py-2.5 rounded-xl text-gray-400 hover:bg-white/5 hover:text-white font-bold transition-all">Annuler</button>
             <button 
               onClick={handleSaveInternal}

@@ -1,6 +1,6 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
-import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc, Firestore } from "firebase/firestore";
-import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, Auth, User } from "firebase/auth";
+import { getFirestore, collection, doc, setDoc, deleteDoc, Firestore, onSnapshot, query, Unsubscribe } from "firebase/firestore";
+import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, Auth, User, onAuthStateChanged } from "firebase/auth";
 import { Activity } from "../types";
 
 const CONFIG_KEY = 'mdj_firebase_config';
@@ -12,6 +12,7 @@ export interface FirebaseConfig {
   storageBucket: string;
   messagingSenderId: string;
   appId: string;
+  measurementId?: string;
 }
 
 let app: FirebaseApp | null = null;
@@ -22,36 +23,25 @@ export const FirebaseService = {
   
   // --- CONFIGURATION ---
 
-  /**
-   * Check if configuration exists in localStorage
-   */
   hasConfig: (): boolean => {
     return !!localStorage.getItem(CONFIG_KEY);
   },
 
-  /**
-   * Save configuration to localStorage and initialize
-   */
   saveConfig: (config: FirebaseConfig) => {
     localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
     FirebaseService.initialize();
   },
 
-  /**
-   * Load config and initialize Firebase App
-   */
   initialize: () => {
-    if (app) return app; // Already initialized
+    if (app) return app;
 
     const configStr = localStorage.getItem(CONFIG_KEY);
     if (!configStr) {
-      console.warn("Firebase not configured");
       return null;
     }
 
     try {
       const config = JSON.parse(configStr);
-      // Check if app already exists in Firebase global namespace to prevent "Duplicate App" errors
       if (!getApps().length) {
         app = initializeApp(config);
       } else {
@@ -67,9 +57,6 @@ export const FirebaseService = {
     }
   },
 
-  /**
-   * Clear config and sign out
-   */
   resetConfig: async () => {
     if (auth) await signOut(auth);
     localStorage.removeItem(CONFIG_KEY);
@@ -86,11 +73,39 @@ export const FirebaseService = {
     if (!auth) throw new Error("Firebase non configuré");
 
     const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({
+      prompt: 'select_account'
+    });
+
     try {
       const result = await signInWithPopup(auth, provider);
-      return result.user;
-    } catch (error) {
+      const user = result.user;
+      
+      // Validation UX du domaine (La sécurité réelle est dans les règles Firestore)
+      /* 
+      if (user.email && !user.email.endsWith('@mdjescalejeunesse.ca')) {
+         // Optionnel
+      } 
+      */
+      
+      return user;
+    } catch (error: any) {
       console.error("Login failed", error);
+      
+      // GESTION ERREUR DOMAINE NON AUTORISÉ
+      if (error.code === 'auth/unauthorized-domain') {
+         const domain = window.location.hostname;
+         const message = `⛔ DOMAINE NON AUTORISÉ (${domain})\n\n` +
+                         `Ce domaine n'est pas autorisé dans votre Console Firebase.\n\n` +
+                         `ACTION REQUISE :\n` +
+                         `1. Allez sur console.firebase.google.com\n` +
+                         `2. Ouvrez votre projet > Authentication > Settings > Authorized Domains\n` +
+                         `3. Cliquez sur "Add domain" et ajoutez : ${domain}\n\n` +
+                         `La fenêtre de configuration va s'ouvrir pour vous aider.`;
+         alert(message);
+      } else if (error.code !== 'auth/popup-closed-by-user') {
+        alert(`Erreur de connexion Google: ${error.message}`);
+      }
       throw error;
     }
   },
@@ -105,29 +120,53 @@ export const FirebaseService = {
     return auth.currentUser;
   },
 
-  // --- DATABASE (FIRESTORE) ---
+  subscribeToAuth: (callback: (user: User | null) => void) => {
+    if (!auth) FirebaseService.initialize();
+    if (!auth) {
+        callback(null);
+        return () => {};
+    }
+    return onAuthStateChanged(auth, callback);
+  },
+
+  // --- DATABASE TEMPS RÉEL (FIRESTORE) ---
+
+  subscribeToActivities: (callback: (activities: Activity[]) => void): Unsubscribe => {
+    if (!db) FirebaseService.initialize();
+    if (!db) throw new Error("Base de données non disponible");
+
+    const q = query(collection(db, "activities"));
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const activities = snapshot.docs.map(doc => ({
+        ...doc.data(),
+        id: doc.id 
+      })) as Activity[];
+      
+      callback(activities);
+    }, (error) => {
+      console.error("Erreur de synchronisation:", error);
+      if (error.code === 'permission-denied') {
+         console.warn("Permissions insuffisantes pour lire les activités.");
+      }
+    });
+
+    return unsubscribe;
+  },
 
   getAll: async (): Promise<Activity[]> => {
-    if (!db) FirebaseService.initialize();
-    if (!db) return [];
-
-    try {
-      const querySnapshot = await getDocs(collection(db, "activities"));
-      return querySnapshot.docs.map(doc => ({
-        ...doc.data(),
-        id: doc.id // Ensure ID matches doc ID
-      })) as Activity[];
-    } catch (error) {
-      console.error("Firestore GET Error:", error);
-      throw error;
-    }
+    return new Promise((resolve, reject) => {
+        const unsub = FirebaseService.subscribeToActivities((data) => {
+            unsub();
+            resolve(data);
+        });
+    });
   },
 
   save: async (activity: Activity): Promise<void> => {
     if (!db) throw new Error("Base de données non connectée");
 
     try {
-      // Use setDoc to create or update document with specific ID
       await setDoc(doc(db, "activities", activity.id), activity);
     } catch (error) {
       console.error("Firestore SAVE Error:", error);

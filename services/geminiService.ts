@@ -5,30 +5,21 @@ import { Activity } from "../types";
  * ═══════════════════════════════════════════════════════════════════════════
  * GEMINI AI SERVICE - UPDATED FOR @google/genai SDK
  * ═══════════════════════════════════════════════════════════════════════════
- * 
- * Compliant with Google GenAI SDK Guidelines:
- * 1. Uses @google/genai package
- * 2. Uses GoogleGenAI class (not GoogleGenerativeAI)
- * 3. Uses new model names (gemini-3-flash-preview)
- * 4. Uses ai.models.generateContent
- * 5. Accesses response.text property
  */
 
 const MDJ_ADDRESS = "5225 Rue de Courcelette, Trois-Rivières, QC G8Z 1K8";
 
 const CONFIG = {
-  // Updated model to Gemini 3 Flash Preview as recommended for basic text tasks
   MODEL: 'gemini-3-flash-preview', 
   TIMEOUT: 30000, 
   MAX_RETRIES: 3,
-  // Guide Recommendation: "When using Gemini 3 models, we strongly recommend keeping the temperature at its default value of 1.0"
   TEMPERATURE: 1.0, 
   MAX_OUTPUT_TOKENS: 2048,
 } as const;
 
-interface GenerateOptions {
+export interface GenerateOptions {
   prompt: string;
-  useSearch?: boolean; // Note: Search grounding config would go here if enabled
+  useSearch?: boolean;
   temperature?: number;
   maxTokens?: number;
   jsonMode?: boolean;
@@ -38,9 +29,6 @@ interface GenerateOptions {
 // UTILITAIRES
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Parses JSON response, handling Markdown code blocks.
- */
 const parseAIResponse = (text: string | undefined): any | null => {
   if (!text) return null;
   try {
@@ -51,7 +39,8 @@ const parseAIResponse = (text: string | undefined): any | null => {
     }
     const jsonMatch = cleanText.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
     if (!jsonMatch) {
-      console.warn("No JSON found in response:", text);
+      // Si on attend du JSON mais qu'on a du texte, on ne log pas d'erreur critique, 
+      // car le Chat utilise ce service pour du texte libre aussi.
       return null;
     }
     return JSON.parse(jsonMatch[0]);
@@ -71,62 +60,58 @@ const getAPIKey = (): string | undefined => {
   return undefined;
 };
 
-/**
- * Core generation function using the new SDK.
- */
-const generateWithRetry = async (options: GenerateOptions): Promise<string | null> => {
-  const apiKey = getAPIKey();
-  if (!apiKey) {
-    console.error("❌ API Key missing");
-    return null;
-  }
-
-  // Always create a new instance as per best practices (cheap lightweight client)
-  const ai = new GoogleGenAI({ apiKey });
-
-  for (let attempt = 1; attempt <= CONFIG.MAX_RETRIES; attempt++) {
-    try {
-      console.log(`🤖 AI Generation (${options.prompt.slice(0, 30)}...) - Attempt ${attempt}`);
-      
-      const config: any = {
-        temperature: options.temperature ?? CONFIG.TEMPERATURE,
-        maxOutputTokens: options.maxTokens ?? CONFIG.MAX_OUTPUT_TOKENS,
-      };
-
-      if (options.jsonMode) {
-        config.responseMimeType = "application/json";
-      }
-
-      // Execute request
-      const response = await ai.models.generateContent({
-        model: CONFIG.MODEL,
-        contents: options.prompt,
-        config: config
-      });
-
-      // Access text property directly (NOT method)
-      const text = response.text;
-      
-      if (!text) throw new Error("Empty response");
-      return text;
-
-    } catch (error: any) {
-      console.warn(`⚠️ Attempt ${attempt} failed:`, error.message || error);
-      if (attempt < CONFIG.MAX_RETRIES) {
-        await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
-      } else {
-        console.error("❌ All attempts failed");
-      }
-    }
-  }
-  return null;
-};
-
 // ═══════════════════════════════════════════════════════════════════════════
 // SERVICE EXPORTS
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const GeminiService = {
+
+  /**
+   * Core generation function made public for ChatService usage.
+   */
+  generateWithRetry: async (options: GenerateOptions): Promise<string | null> => {
+    const apiKey = getAPIKey();
+    if (!apiKey) {
+      console.error("❌ API Key missing");
+      return "Erreur: Clé API manquante. Veuillez vérifier la configuration.";
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
+
+    for (let attempt = 1; attempt <= CONFIG.MAX_RETRIES; attempt++) {
+      try {
+        console.log(`🤖 AI Generation - Attempt ${attempt}`);
+        
+        const config: any = {
+          temperature: options.temperature ?? CONFIG.TEMPERATURE,
+          maxOutputTokens: options.maxTokens ?? CONFIG.MAX_OUTPUT_TOKENS,
+        };
+
+        if (options.jsonMode) {
+          config.responseMimeType = "application/json";
+        }
+
+        const response = await ai.models.generateContent({
+          model: CONFIG.MODEL,
+          contents: options.prompt,
+          config: config
+        });
+
+        const text = response.text;
+        if (!text) throw new Error("Empty response");
+        return text;
+
+      } catch (error: any) {
+        console.warn(`⚠️ Attempt ${attempt} failed:`, error.message || error);
+        if (attempt < CONFIG.MAX_RETRIES) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+        } else {
+          console.error("❌ All attempts failed");
+        }
+      }
+    }
+    return null;
+  },
   
   generatePedagogy: async (title: string, currentDesc: string) => {
     const prompt = `Tu es un expert en animation jeunesse.
@@ -135,7 +120,7 @@ export const GeminiService = {
     
     Génère un JSON avec: description (40-60 mots, ton jeune), objectives (3 verbes d'action), youthTasks (3 tâches), evaluationCriteria (2 questions).`;
     
-    const text = await generateWithRetry({ prompt, jsonMode: true });
+    const text = await GeminiService.generateWithRetry({ prompt, jsonMode: true });
     return parseAIResponse(text);
   },
 
@@ -148,7 +133,7 @@ export const GeminiService = {
     Trouve ou estime: venueName, address, phoneNumber, website, distance (km), travelTime (min), transportRequired (bool), transportMode.
     JSON uniquement.`;
 
-    const text = await generateWithRetry({ prompt, jsonMode: true });
+    const text = await GeminiService.generateWithRetry({ prompt, jsonMode: true });
     return parseAIResponse(text);
   },
 
@@ -156,7 +141,7 @@ export const GeminiService = {
     const prompt = `Liste matériel pour: "${title}".
     JSON structure: { materials: [{ item, quantity, supplier: "MDJ"|"Achat" }] }`;
 
-    const text = await generateWithRetry({ prompt, jsonMode: true });
+    const text = await GeminiService.generateWithRetry({ prompt, jsonMode: true });
     return parseAIResponse(text);
   },
 
@@ -164,7 +149,7 @@ export const GeminiService = {
     const prompt = `Analyse risques activité jeunesse: "${title}" (${type}).
     JSON structure: { hazards: [], safetyProtocols: [], requiredInsurance: string }`;
 
-    const text = await generateWithRetry({ prompt, jsonMode: true });
+    const text = await GeminiService.generateWithRetry({ prompt, jsonMode: true });
     return parseAIResponse(text);
   },
 
@@ -172,7 +157,7 @@ export const GeminiService = {
     const prompt = `Encadrement activité jeunesse: "${title}" (${type}).
     JSON structure: { requiredRatio, specialQualifications, supportRole }`;
 
-    const text = await generateWithRetry({ prompt, jsonMode: true });
+    const text = await GeminiService.generateWithRetry({ prompt, jsonMode: true });
     return parseAIResponse(text);
   },
 
@@ -181,7 +166,7 @@ export const GeminiService = {
     const prompt = `Estime budget Trois-Rivières 2024 pour: "${title}". Matériel: ${matList}.
     JSON structure: { estimatedCost: number, items: [{ description, amount }] }`;
 
-    const text = await generateWithRetry({ prompt, jsonMode: true });
+    const text = await GeminiService.generateWithRetry({ prompt, jsonMode: true });
     return parseAIResponse(text);
   },
 
@@ -190,7 +175,7 @@ export const GeminiService = {
     Choisis parmi: Relationnel, Éducatif, Créatif, Physique, Communautaire.
     JSON: { rmjqDimensions: string[] }`;
 
-    const text = await generateWithRetry({ prompt, jsonMode: true });
+    const text = await GeminiService.generateWithRetry({ prompt, jsonMode: true });
     return parseAIResponse(text);
   },
 
@@ -214,8 +199,7 @@ export const GeminiService = {
 
     Utilise des données réalistes. JSON strict.`;
 
-    // Using a slightly higher max tokens for the full enrichment
-    const text = await generateWithRetry({ 
+    const text = await GeminiService.generateWithRetry({ 
       prompt, 
       jsonMode: true,
       maxTokens: 4000 
@@ -225,7 +209,7 @@ export const GeminiService = {
   },
 
   healthCheck: async () => {
-    const text = await generateWithRetry({ prompt: "Hello", maxTokens: 5 });
+    const text = await GeminiService.generateWithRetry({ prompt: "Hello", maxTokens: 5 });
     return {
       status: text ? 'healthy' : 'unhealthy',
       details: text ? `Connected to ${CONFIG.MODEL}` : 'Connection failed'
