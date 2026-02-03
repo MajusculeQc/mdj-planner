@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@azure/msal-browser": "^3.10.0",
+    "@azure/msal-react": "^2.0.10",
     "@google/genai": "*",
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "lucide-react": "^0.344.0",
