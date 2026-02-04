@@ -1,79 +1,77 @@
-import { initializeApp, getApps, getApp, FirebaseApp } from "firebase/app";
+import { initializeApp, getApp, getApps, FirebaseApp } from "firebase/app";
 import { getFirestore, collection, doc, setDoc, deleteDoc, Firestore, onSnapshot, query, Unsubscribe, orderBy } from "firebase/firestore";
-import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, Auth, User, onAuthStateChanged } from "firebase/auth";
-import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "firebase/app-check";
+import { getAuth, signInWithPopup, GoogleAuthProvider, OAuthProvider, signOut, Auth, User, onAuthStateChanged } from "firebase/auth";
+import { getVertexAI, getGenerativeModel } from "firebase/vertexai-preview";
 import { Activity } from "../types";
 
-const CONFIG_KEY = 'mdj_firebase_config';
+// --- 1. CONFIGURATION ---
+const firebaseConfig = {
+  apiKey: "AIzaSyDDiWf0Vt5k3eVfKXw7VEY9I2AyCSfrxVQ",
+  authDomain: "mdj-planner-prod.firebaseapp.com",
+  projectId: "mdj-planner-prod",
+  storageBucket: "mdj-planner-prod.firebasestorage.app",
+  messagingSenderId: "982719306470",
+  appId: "1:982719306470:web:abc541e68cda448bfdb927",
+  measurementId: "G-S507RYRT6X"
+};
 
-export interface FirebaseConfig {
-  apiKey: string;
-  authDomain: string;
-  projectId: string;
-  storageBucket: string;
-  messagingSenderId: string;
-  appId: string;
+// --- 2. INITIALISATION ---
+let app: FirebaseApp;
+if (!getApps().length) {
+    app = initializeApp(firebaseConfig);
+} else {
+    app = getApp();
 }
 
-let app: FirebaseApp | null = null;
-let db: Firestore | null = null;
-let auth: Auth | null = null;
+// On exporte les instances
+export const db = getFirestore(app);
+export const auth = getAuth(app);
 
+// --- 3. CONFIGURATION DE L'IA (GEMINI) ---
+const vertexAI = getVertexAI(app);
+export const model = getGenerativeModel(vertexAI, { 
+    model: "gemini-1.5-flash" 
+});
+
+// --- 4. SERVICE ---
 export const FirebaseService = {
-  
-  isConfigured: () => {
-    return !!localStorage.getItem(CONFIG_KEY);
-  },
 
-  initialize: () => {
-    if (app) return app;
-
-    const configStr = localStorage.getItem(CONFIG_KEY);
-    if (!configStr) return null;
-
-    try {
-      const config = JSON.parse(configStr);
-      if (!getApps().length) {
-        app = initializeApp(config);
-      } else {
-        app = getApp();
-      }
-      
-      db = getFirestore(app);
-      auth = getAuth(app);
-      return app;
-    } catch (e) {
-      console.error("Firebase Initialization Error:", e);
-      return null;
-    }
-  },
-
-  saveConfig: (config: FirebaseConfig) => {
-    localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
-    window.location.reload(); // Recharger pour appliquer la nouvelle config
-  },
-
+  // Connexion avec GOOGLE (Compte perso ou Gmail)
   login: async (): Promise<User | null> => {
-    if (!auth) FirebaseService.initialize();
-    if (!auth) throw new Error("Firebase non configuré");
-
     const provider = new GoogleAuthProvider();
     try {
       const result = await signInWithPopup(auth, provider);
       return result.user;
     } catch (error: any) {
-      console.error("Login failed", error);
+      console.error("Login Google failed", error);
+      throw error;
+    }
+  },
+
+  // Connexion avec MICROSOFT 365 (Pour Laurie, Charles, DG, etc.)
+  loginWithMicrosoft: async (): Promise<User | null> => {
+    const provider = new OAuthProvider('microsoft.com');
+    
+    // CORRECTION ICI : On spécifie l'ID unique de ton organisation pour éviter l'erreur AADSTS50194
+    provider.setCustomParameters({
+        tenant: 'e0dd87f7-e6e3-4a48-83b2-64415a9bc105', 
+        prompt: 'select_account'
+    });
+
+    try {
+      const result = await signInWithPopup(auth, provider);
+      return result.user;
+    } catch (error: any) {
+      console.error("Login Microsoft failed", error);
       throw error;
     }
   },
 
   logout: async () => {
-    if (auth) await signOut(auth);
+    await signOut(auth);
   },
 
   subscribeToAuth: (callback: (user: User | null) => void) => {
-    if (!auth) FirebaseService.initialize();
-    if (!auth) return () => {};
     return onAuthStateChanged(auth, callback);
   },
 
@@ -81,12 +79,12 @@ export const FirebaseService = {
    * Écoute les activités en temps réel depuis Firestore
    */
   subscribeToActivities: (callback: (activities: Activity[]) => void): Unsubscribe => {
-    if (!db) FirebaseService.initialize();
-    if (!db) return () => {};
-
     const q = query(collection(db, "activities"), orderBy("date", "asc"));
     return onSnapshot(q, (snapshot) => {
-      const activities = snapshot.docs.map(doc => doc.data() as Activity);
+      const activities = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      } as Activity));
       callback(activities);
     }, (error) => {
       console.error("Erreur de synchronisation Firestore:", error);
@@ -94,12 +92,13 @@ export const FirebaseService = {
   },
 
   save: async (activity: Activity): Promise<void> => {
-    if (!db) throw new Error("Base de données non connectée");
+    if (!activity.id) {
+        throw new Error("L'activité doit avoir un ID");
+    }
     await setDoc(doc(db, "activities", activity.id), activity);
   },
 
   delete: async (id: string): Promise<void> => {
-    if (!db) return;
     await deleteDoc(doc(db, "activities", id));
   }
 };

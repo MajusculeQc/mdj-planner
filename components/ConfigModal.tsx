@@ -81,9 +81,9 @@ const ConfigModal: React.FC<Props> = ({ onSave, onClose }) => {
                     <ol className="list-decimal pl-4 space-y-2 text-gray-300 text-xs">
                         <li>Allez sur la <a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="text-mdj-cyan underline font-bold hover:text-white inline-flex items-center gap-1">Console Firebase <ExternalLink className="w-3 h-3"/></a>.</li>
                         <li>Créez un projet (ex: "Planificateur-MDJ").</li>
-                        <li>Menu <strong>Création</strong> > <strong>Authentication</strong> > Activer <strong>Google</strong>.</li>
-                        <li>Menu <strong>Création</strong> > <strong>Firestore Database</strong> > Créer > Mode Test.</li>
-                        <li>Paramètres (⚙️) > Général > Ajouter une application Web (<strong>&lt;/&gt;</strong>).</li>
+                        <li>Menu <strong>Création</strong> &gt; <strong>Authentication</strong> &gt; Activer <strong>Google</strong>.</li>
+                        <li>Menu <strong>Création</strong> &gt; <strong>Firestore Database</strong> &gt; Créer &gt; Mode Test.</li>
+                        <li>Paramètres (⚙️) &gt; Général &gt; Ajouter une application Web (<strong>&lt;/&gt;</strong>).</li>
                         <li>Copiez le contenu de <code>firebaseConfig</code> ci-dessous.</li>
                     </ol>
                 </div>
@@ -137,7 +137,7 @@ const ConfigModal: React.FC<Props> = ({ onSave, onClose }) => {
                   <div className="bg-green-500/5 rounded-xl p-4 border border-green-500/20">
                       <h3 className="font-bold text-green-400 mb-2 flex items-center gap-2 text-sm"><Lock className="w-4 h-4"/> 3. Sécuriser les données (Règles Firestore)</h3>
                       <p className="text-xs text-gray-300 mb-2">
-                          Copiez ce code dans l'onglet <strong>Firestore Database</strong> > <strong>Règles</strong> pour restreindre l'accès :
+                          Copiez ce code dans l'onglet <strong>Firestore Database</strong> &gt; <strong>Règles</strong> pour restreindre l'accès :
                       </p>
                       <div className="relative group">
                           <pre className="bg-mdj-black p-3 rounded-lg border border-white/10 text-[10px] text-green-300 font-mono overflow-x-auto whitespace-pre-wrap">
