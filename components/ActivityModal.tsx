@@ -1,1064 +1,1054 @@
-import React, { useState, useEffect } from 'react';
-import { Activity, ActivityType, Material } from '../types';
-import { HtmlGeneratorService } from '../services/htmlGeneratorService';
-import { X, Wand2, CheckSquare, MapPin, Truck, ShieldAlert, DollarSign, Users, Save, CheckCircle, Circle, LayoutDashboard, BrainCircuit, Hand, Clock, Timer, Phone, Link as LinkIcon, FileText, Gavel, PlusCircle, Sparkles, Printer } from 'lucide-react';
+import React, { useState, useEffect, memo, useCallback, useRef, useMemo } from 'react';
+import { z } from 'zod';
+import { Activity, ActivityType, ActivityDocument, ActivityComment, Material, RiskManagement, Logistics, YouthInvolvement } from '../types';
+import { X, LayoutDashboard, History, Users, Hand, MapPin, ShieldAlert, DollarSign, Truck, Folder, GripVertical, Printer, Save, CheckSquare, Clock, Trash2, ClipboardCheck, Copy, AlertCircle, Globe, BookOpen } from 'lucide-react';
+import { STAFF_LIST, SUPPORT_STAFF_EXTRAS, TEAM_DIRECTORY, SUGGESTIONS, DEFAULT_START_TIME, DEFAULT_END_TIME, HOMEWORK_HELP_START_TIME, HOMEWORK_HELP_END_TIME } from '../lib/constants';
+
+import { calculateActivityReadiness } from '../lib/readiness';
+import { suggestDimensions } from '../lib/rmjqUtils';
+import { FirebaseService } from '../services/firebaseService';
+import { parseActivityStrict } from '../lib/schemas';
+import { checkStaffConflict, getConflictingActivities } from '../lib/staffConflict';
+import { isSuperAdmin } from '../lib/auth-utils';
+import { cn, isAbsence } from '../lib/utils';
+import { getRMJQFromObjectives, getPSOCFromType } from '../lib/taxonomyMapping';
+import { useCustomSuggestions } from '../hooks/useCustomSuggestions';
+
+// Import modular components
+import ChecklistTab from './activity/ChecklistTab';
+import StaffTab from './activity/StaffTab';
+import PedagogyTab from './activity/PedagogyTab';
+import LogisticsTab from './activity/LogisticsTab';
+import RiskTab from './activity/RiskTab';
+import BudgetTab from './activity/BudgetTab';
+import MaterialsTab from './activity/MaterialsTab';
+import DocumentsTab from './activity/DocumentsTab';
+import JournalTab from './activity/JournalTab';
+import ControlTab from './activity/ControlTab';
+import JournalDeBordTab from './activity/JournalDeBordTab';
+import { useInventory } from '../hooks/useInventory';
+import { useReservations } from '../hooks/useReservations';
+import { useActivities } from '../hooks/useActivities';
+import { RegistrationsTab } from './activity/RegistrationsTab';
+import AICorrectButton from './ui/AICorrectButton';
 
 interface Props {
   activity: Activity;
   onClose: () => void;
   onSave: (updated: Activity) => void;
+  onDelete?: (id: string) => void;
+  userEmail?: string;
+  allActivities?: Activity[];
+  initialTab?: string;
+  onClone?: (activity: Activity) => Promise<void>;
 }
 
-const STAFF_LIST = ["Charles Frenette", "Laurie Bray Pratte", "Mikael Delage", "Ann-Sushi (Stagiaire)", "Patrick Delage", "Sébastien Johnson"];
+type TabId = 'checklist' | 'pedagogy' | 'logistics' | 'materials' | 'risk' | 'staff' | 'budget' | 'documents' | 'inscriptions' | 'jdb' | 'journal' | 'control';
 
-const SUGGESTIONS: Record<string, string[]> = {
-  objectives: [
-    "Développer l'esprit critique",
-    "Favoriser l'autonomie",
-    "Créer des liens significatifs",
-    "Saines habitudes de vie",
-    "Estime de soi",
-    "Ouverture sur la communauté",
-    "Gestion des émotions",
-    "Ouverture culturelle"
-  ],
-  tasks: [
-    "Préparation de la salle",
-    "Accueil des participants",
-    "Animation d'un segment",
-    "Responsable de la musique",
-    "Prise de photos",
-    "Nettoyage et rangement",
-    "Gestion des collations",
-    "Cuisine collective",
-    "Maître de jeu (RPG)"
-  ],
-  evaluation: [
-    "Niveau de participation active",
-    "Respect des consignes de sécurité",
-    "Qualité des interactions (climat)",
-    "Plaisir exprimé par les jeunes",
-    "Atteinte des objectifs pédagogiques",
-    "Gestion des conflits"
-  ],
-  materials: [
-    "Trousse de premiers soins",
-    "Bouteilles d'eau",
-    "Dossards",
-    "Système de son",
-    "Collations / Repas",
-    "Tablettes/Caméra",
-    "Jeux de société",
-    "Matériel d'art",
-    "Équipement de sport"
-  ],
-  hazards: [
-    "Chute ou glissade",
-    "Blessure sportive",
-    "Conflit entre jeunes",
-    "Rejet ou intimidation",
-    "Réaction allergique",
-    "Coupure ou brûlure",
-    "Égarement (Sortie)",
-    "Météo défavorable"
-  ],
-  protocols: [
-    "Dénombrement régulier",
-    "Cellulaire d'urgence chargé",
-    "Vérification des antécédents médicaux",
-    "Respect du Code de vie",
-    "Port de l'équipement de sécurité",
-    "Système de jumelage (Buddy system)",
-    "Supervision cuisine"
-  ],
-  compliance: [
-    "Formulaire de consentement signé",
-    "Fiche santé à jour",
-    "Décharge de responsabilité du lieu",
-    "Permis de conduire vérifié"
-  ],
-  siteRules: [
-    "Interdiction de fumer/voter",
-    "Respect du matériel du lieu",
-    "Politesse envers le personnel",
-    "Pas de flânage dans les corridors"
-  ],
-  budget: [
-    "Transport (Autobus/Essence)",
-    "Billets d'admission",
-    "Épicerie / Repas",
-    "Matériel d'animation",
-    "Honoraires intervenant externe",
-    "Location de salle"
-  ],
-  qualifications: [
-    "Secourisme RCR à jour",
-    "Permis de conduire classe 4B",
-    "Carte de sauveteur",
-    "Formation DAFA",
-    "Expérience en intervention plein air"
-  ]
-};
+interface TabDef {
+  id: TabId;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+}
+
+const DEFAULT_TABS: TabDef[] = [
+  { id: 'logistics', label: 'Logistique', icon: MapPin },
+  { id: 'staff', label: 'Équipe', icon: Users },
+  { id: 'pedagogy', label: 'Pédagogie', icon: Hand },
+  { id: 'risk', label: 'Risques', icon: ShieldAlert },
+  { id: 'control', label: 'Contrôle', icon: ClipboardCheck },
+  { id: 'materials', label: 'Matériel', icon: Truck },
+  { id: 'inscriptions', label: 'Inscriptions', icon: Globe },
+  { id: 'jdb', label: 'Journal De Bord', icon: CheckSquare },
+  { id: 'documents', label: 'Documents', icon: Folder },
+  { id: 'checklist', label: 'Checklist', icon: LayoutDashboard },
+  { id: 'journal', label: 'Historique', icon: History },
+];
+
+const TAB_MAP = Object.fromEntries(DEFAULT_TABS.map(t => [t.id, t])) as Record<TabId, TabDef>;
+
+function getStorageKey(email?: string) {
+  return `mdj-tab-order-v2-${email ?? 'default'}`;
+}
+
+function loadTabOrder(email?: string): TabDef[] {
+  try {
+    const raw = localStorage.getItem(getStorageKey(email));
+    if (!raw) return DEFAULT_TABS;
+    const ids: TabId[] = JSON.parse(raw);
+    // Rebuild from the saved ID order, keeping icon refs intact
+    const ordered = ids.map(id => TAB_MAP[id]).filter(Boolean);
+    // Append any new tabs not yet saved
+    const seen = new Set(ids);
+    DEFAULT_TABS.forEach(t => { if (!seen.has(t.id)) ordered.push(t); });
+    return ordered;
+  } catch {
+    return DEFAULT_TABS;
+  }
+}
+
+function saveTabOrder(tabs: TabDef[], email?: string) {
+  localStorage.setItem(getStorageKey(email), JSON.stringify(tabs.map(t => t.id)));
+}
+
+
 
 const DEFAULT_SUPPORT_STAFF = [
   ...STAFF_LIST,
-  "Stagiaire", 
-  "Bénévole", 
-  "Parent-Accompagnateur", 
-  "Coordonnateur", 
-  "Intervenant externe"
+  ...SUPPORT_STAFF_EXTRAS,
 ];
 
-const ActivityModal: React.FC<Props> = ({ activity: initialActivity, onClose, onSave }) => {
-  const [activity, setActivity] = useState<Activity>(initialActivity);
-  const [activeTab, setActiveTab] = useState<'checklist' | 'pedagogy' | 'logistics' | 'materials' | 'risk' | 'staff' | 'budget'>('checklist');
-  const [customSuggestions, setCustomSuggestions] = useState<Record<string, string[]>>({});
+const ActivityModal: React.FC<Props> = memo(({ activity: initialActivity, onClose, onSave, onDelete, userEmail, allActivities, initialTab, onClone }) => {
+  const { addSuggestions } = useCustomSuggestions();
 
-  useEffect(() => {
-    const loaded: Record<string, string[]> = {};
-    const keys = [...Object.keys(SUGGESTIONS), 'supportStaff'];
-    
-    keys.forEach(key => {
-      try {
-        const saved = localStorage.getItem(`mdj_custom_${key}`);
-        loaded[key] = saved ? JSON.parse(saved) : [];
-      } catch (e) {
-        loaded[key] = [];
-      }
-    });
-    setCustomSuggestions(loaded);
-  }, []);
+  // CRUCIAL: Initialisation sécurisée du champ documents
+  const [activity, setActivity] = useState<Activity>({
+    ...initialActivity,
+    documents: initialActivity.documents || [],
+    comments: initialActivity.comments || [],
+    youthInvolvement: {
+      level: (initialActivity.youthInvolvement?.level && ['Consultation', 'Organisation', 'Animation', 'Participation'].includes(initialActivity.youthInvolvement.level))
+        ? initialActivity.youthInvolvement.level
+        : null,
+      tasks: initialActivity.youthInvolvement?.tasks || []
+    },
+    checklist: initialActivity.checklist || [],
+    journal: initialActivity.journal || '',
+    types: (initialActivity.types && initialActivity.types.length > 0)
+      ? initialActivity.types
+      : (initialActivity.type ? [initialActivity.type] : []),
+  });
+  const [showTransfer, setShowTransfer] = useState(false);
+  const [newComment, setNewComment] = useState('');
+  const [tabs, setTabs] = useState<TabDef[]>(() => loadTabOrder(userEmail));
+  const dragTab = useRef<number | null>(null);
+  const dragOverTab = useRef<number | null>(null);
 
-  const calculateReadiness = () => {
-    let score = 0;
-    let totalChecks = 0;
-    const checks: { label: string; met: boolean; tab: string }[] = [];
+  const [activeTab, setActiveTab] = useState<TabId>((initialTab as TabId) || 'logistics');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isTransferring, setIsTransferring] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
-    const addCheck = (label: string, condition: boolean, tab: any) => {
-      totalChecks++;
-      if (condition) score++;
-      checks.push({ label, met: condition, tab });
-    };
+  const { items: inventoryItems, updateItemCondition } = useInventory(userEmail);
+  const { reservations: allReservations, validateConsumption } = useReservations(inventoryItems, userEmail);
+  const { setConsumptionValidated } = useActivities(userEmail);
 
-    addCheck("Objectifs (Critique/Actif/Responsable)", activity.objectives.length > 0, 'pedagogy');
-    addCheck("Implication des jeunes définie", activity.youthInvolvement?.tasks?.length > 0, 'pedagogy');
-    addCheck("Critères d'évaluation définis", activity.evaluationCriteria?.length > 0, 'pedagogy');
-    addCheck("Horaires définis", !!activity.startTime && !!activity.endTime, 'logistics');
-    addCheck("Lieu et transport validés", !!activity.logistics.venueName && (!activity.logistics.transportRequired || !!activity.logistics.transportMode), 'logistics');
-    addCheck("Heures transport définies", !activity.logistics.transportRequired || (!!activity.logistics.departureTime && !!activity.logistics.returnTime), 'logistics');
-    addCheck("Matériel listé", activity.materials.length > 0, 'materials'); 
-    addCheck("Adultes significatifs désignés", !!activity.staffing.leadStaff, 'staff');
-    addCheck("Ratio d'encadrement respecté", !!activity.staffing.requiredRatio, 'staff');
-    addCheck("Risques & Code de vie", activity.riskManagement.safetyProtocols.length > 0, 'risk');
-    addCheck("Contact d'urgence", !!activity.riskManagement.emergencyContact, 'risk');
+  const activityReservations = useMemo(() =>
+    allReservations.filter(r => r.activityId === activity.id),
+    [allReservations, activity.id]);
 
-    return {
-      percentage: totalChecks === 0 ? 0 : Math.round((score / totalChecks) * 100),
-      checks
-    };
+  const updateLogistics = (updates: Partial<Logistics>) => {
+    setActivity(prev => ({ ...prev, logistics: { ...prev.logistics, ...updates } }));
   };
 
-  const readiness = calculateReadiness();
+  const updateYouthInvolvement = (updates: Partial<YouthInvolvement>) => {
+    setActivity(prev => ({ ...prev, youthInvolvement: { ...prev.youthInvolvement, ...updates } }));
+  };
+
+  const updateStats = (updates: Partial<Activity['stats']>) => {
+    setActivity(prev => ({ ...prev, stats: { ...prev.stats, ...updates } }));
+  };
+
+  const handleTransferResponsibility = async (newLeadEmail: string) => {
+    if (!newLeadEmail) return;
+    setIsTransferring(true);
+    try {
+      const previousLead = activity.staffing.leadStaff || 'Non assigné';
+      const newLeadName = Object.keys(TEAM_DIRECTORY).find(k => TEAM_DIRECTORY[k] === newLeadEmail) || newLeadEmail;
+
+      const updatedActivity = {
+        ...activity,
+        staffing: { ...activity.staffing, leadStaff: newLeadName }
+      };
+
+      setActivity(updatedActivity);
+      setShowTransfer(false);
+
+      // Notify via Firebase
+      await FirebaseService.notifyTransfer(
+        updatedActivity,
+        previousLead,
+        newLeadName,
+        newLeadEmail,
+        (userEmail && TEAM_DIRECTORY[userEmail]) ? Object.keys(TEAM_DIRECTORY).find(k => TEAM_DIRECTORY[k] === userEmail) || userEmail : (userEmail || 'Inconnu')
+      );
+    } catch (error) {
+      console.error("Transfer error:", error);
+      alert("Erreur lors du transfert de responsabilité.");
+    } finally {
+      setIsTransferring(false);
+    }
+  };
+
+  const autoSuggestAll = async () => {
+    if (!activity.title) {
+      alert("Veuillez donner un titre à l'activité pour générer des suggestions.");
+      return;
+    }
+    setIsGenerating(true);
+    try {
+      const suggestions = suggestDimensions(activity.title, activity.description);
+      setActivity(prev => ({
+        ...prev,
+        rmjqDimensions: [...new Set([...(prev.rmjqDimensions || []), ...suggestions])]
+      }));
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const availableLeadStaff = useMemo(() => {
+    if (!allActivities) return Object.keys(TEAM_DIRECTORY);
+    const absencesToday = allActivities.filter((a: Activity) => a.date === activity.date && isAbsence(a.title));
+    const absentNames = absencesToday.map((a: Activity) => {
+      const match = a.title.match(/^(?:absence|vacances?|cong[eé]s?)\s*(?:-|:)?\s*(.+)$/i);
+      return match ? match[1].trim().toLowerCase() : '';
+    });
+    return Object.keys(TEAM_DIRECTORY).filter((name: string) => {
+      const nameLower = name.toLowerCase();
+      return !absentNames.some((absent: string) => absent && absent.length >= 2 && (nameLower.includes(absent) || absent.includes(nameLower)));
+    });
+  }, [activity.date, allActivities]);
+
+  const availableSupportStaff = useMemo(() => {
+    if (!allActivities) return DEFAULT_SUPPORT_STAFF;
+    const absencesToday = allActivities.filter((a: Activity) => a.date === activity.date && isAbsence(a.title));
+    const absentNames = absencesToday.map((a: Activity) => {
+      const match = a.title.match(/^(?:absence|vacances?|cong[eé]s?)\s*(?:-|:)?\s*(.+)$/i);
+      return match ? match[1].trim().toLowerCase() : '';
+    });
+    return DEFAULT_SUPPORT_STAFF.filter((name: string) => {
+      const nameLower = name.toLowerCase();
+      return !absentNames.some((absent: string) => absent && absent.length >= 2 && (nameLower.includes(absent) || absent.includes(nameLower)));
+    });
+  }, [activity.date, allActivities]);
+
+  // --- IMPRESSION FICHE TERRAIN (Mise à jour) ---
+  const handlePrint = () => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert("Veuillez autoriser les pop-ups pour imprimer.");
+      return;
+    }
+
+    // Icônes SVG pour l'impression
+    const icons = {
+      clock: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>`,
+      map: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>`,
+      bus: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="11" rx="2"></rect><path d="M14 17v4"></path><path d="M6 17v4"></path><path d="M3 11h18"></path></svg>`,
+      users: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>`,
+      brain: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"></path><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"></path></svg>`,
+      shield: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>`,
+      box: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>`
+    };
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>FICHE : ${activity.title}</title>
+        <style>
+          @page { size: 8.5in 11in; margin: 0.5in; }
+          body { font-family: 'Helvetica Neue', Arial, sans-serif; color: #1a202c; line-height: 1.3; margin: 0; padding: 0; -webkit-print-color-adjust: exact; }
+          
+          /* HEADER */
+          .header { background-color: #2d3748; color: white; padding: 15px 20px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+          .header h1 { margin: 0; font-size: 22px; text-transform: uppercase; letter-spacing: 1px; }
+          .header-meta { margin-top: 5px; opacity: 0.9; font-size: 13px; display: flex; align-items: center; gap: 15px; }
+          .badge { background: #4299e1; color: white; padding: 3px 8px; border-radius: 4px; font-weight: bold; font-size: 11px; text-transform: uppercase; }
+          .score-circle { width: 45px; height: 45px; border-radius: 50%; border: 3px solid #48bb78; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; color: #48bb78; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+
+          /* LAYOUT */
+          .container { display: grid; grid-template-columns: 1fr 1fr; gap: 25px; }
+          
+          /* SECTIONS */
+          .section { border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; background: #fff; margin-bottom: 15px; break-inside: avoid; }
+          .section-title { font-size: 11px; font-weight: 800; text-transform: uppercase; color: #718096; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; letter-spacing: 0.5px; }
+          
+          .row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 11px; }
+          .label { font-weight: 700; color: #4a5568; }
+          .value { text-align: right; color: #000; font-weight: 500; max-width: 65%; }
+          
+          /* LISTS & TEXT */
+          .description { font-style: italic; background: #f7fafc; padding: 10px; border-radius: 4px; font-size: 11px; color: #2d3748; border-left: 3px solid #cbd5e0; margin-bottom: 10px; }
+          .list-item { display: flex; align-items: flex-start; gap: 6px; font-size: 11px; margin-bottom: 4px; line-height: 1.4; }
+          .checkbox { width: 10px; height: 10px; border: 1px solid #a0aec0; border-radius: 2px; display: inline-block; margin-top: 2px; background: white; }
+          
+          /* RISK BOX */
+          .risk-section { border: 1px solid #feb2b2; background: #fff5f5; }
+          .risk-title { color: #c53030; border-bottom-color: #fc8181; }
+          .risk-label { color: #c53030; font-weight: bold; font-size: 10px; uppercase; }
+
+          /* SIGNATURE */
+          .signature-section { margin-top: 30px; display: flex; justify-content: space-between; align-items: flex-end; font-size: 11px; color: #4a5568; }
+          .sig-box { text-align: center; }
+          .sig-line { width: 220px; border-bottom: 1px solid #000; height: 30px; margin-bottom: 5px; }
+          
+          /* FOOTER */
+          .footer { text-align: center; font-size: 9px; color: #a0aec0; margin-top: 30px; border-top: 1px solid #e2e8f0; padding-top: 8px; }
+        </style>
+      </head>
+      <body>
+        
+        <div class="header">
+          <div>
+            <h1>${activity.title}</h1>
+            <div class="header-meta">
+               <span>${icons.clock} ${activity.date} | ${activity.startTime} - ${activity.endTime}</span>
+               <span class="badge">${(activity.types || []).join(' | ') || activity.type || 'Non défini'}</span>
+            </div>
+          </div>
+          <div class="score-circle">
+            ${activity.preparationScore}%
+          </div>
+        </div>
+
+        <div class="container">
+          
+          <div>
+            
+            <div class="section">
+              <div class="section-title">${icons.map} LOGISTIQUE & LIEU</div>
+              <div class="row"><span class="label">Lieu:</span> <span class="value">${activity.logistics.venueName}</span></div>
+              <div class="row"><span class="label">Adresse:</span> <span class="value">${activity.logistics.address}</span></div>
+              <div class="row"><span class="label">Contact:</span> <span class="value">${activity.logistics.phoneNumber || '-'}</span></div>
+              <div className="row"><span class="label">Site Web:</span> <span class="value">${activity.logistics.website || '-'}</span></div>
+              <div className="row"><span class="label">Facebook:</span> <span class="value">${(activity.logistics as any).facebook || '-'}</span></div>
+              <div className="row"><span class="label">Courriel:</span> <span class="value">${activity.logistics.email || '-'}</span></div>
+              <div class="row"><span class="label">Rassemblement:</span> <span class="value">${activity.logistics.meetingPoint || 'MDJ'}</span></div>
+              <div class="row"><span class="label">Aide aux devoirs (16h30):</span> <span class="value">${activity.hasHomeworkHelp ? 'OUI' : 'NON'}</span></div>
+              <div class="row"><span class="label">Coût / personne:</span> <span class="value">${activity.logistics.isFree ? 'GRATUIT' : (activity.logistics.costPerPerson || 0).toFixed(2) + ' $'}</span></div>
+            </div>
+
+            <div class="section">
+              <div class="section-title">${icons.bus} TRANSPORT</div>
+              <div class="row"><span class="label">Requis:</span> <span class="value">${activity.logistics.transportRequired ? 'OUI' : 'NON'}</span></div>
+              ${activity.logistics.transportRequired ? `
+                <div class="row"><span class="label">Mode:</span> <span class="value">${activity.logistics.transportMode || '-'}</span></div>
+                <div class="row"><span class="label">Distance:</span> <span class="value">${activity.logistics.distance || '-'}</span></div>
+                <div class="row"><span class="label">Durée:</span> <span class="value">${activity.logistics.travelTime || '-'}</span></div>
+                <div class="row"><span class="label">Départ:</span> <span class="value">${activity.logistics.departureTime || '-'}</span></div>
+                <div class="row"><span class="label">Retour:</span> <span class="value">${activity.logistics.returnTime || '-'}</span></div>
+              ` : ''}
+            </div>
+
+            <div class="section">
+              <div class="section-title">${icons.users} ÉQUIPE & ENCADREMENT</div>
+              <div class="row"><span class="label">Responsable:</span> <span class="value" style="font-weight:800;">${activity.staffing.leadStaff || 'À définir'}</span></div>
+              <div class="row"><span class="label">Ratio:</span> <span class="value">${activity.staffing.requiredRatio}</span></div>
+              <div style="margin-top:8px; border-top:1px dashed #e2e8f0; padding-top:6px;">
+                <span class="label" style="font-size:10px;">SOUTIEN:</span><br/>
+                <span style="font-size:11px;">${activity.staffing.supportStaff.length > 0 ? activity.staffing.supportStaff.join(', ') : 'Aucun'}</span>
+              </div>
+            </div>
+
+            <div class="section">
+               <div class="section-title">${icons.box} MATÉRIEL & BUDGET</div>
+               <div class="row"><span class="label">Budget Estimé:</span> <span class="value">${activity.budget.estimatedCost.toFixed(2)} $</span></div>
+               <div style="margin-top:8px;">
+                 <span class="label" style="font-size:10px;">LISTE MATÉRIEL:</span>
+                 <div style="margin-top:4px;">
+                 ${activity.materials.length > 0 ?
+        activity.materials.map(m => `<div class="list-item"><span class="checkbox"></span> ${m.quantity} x ${m.item}</div>`).join('')
+        : '<div style="font-style:italic; font-size:10px; color:#a0aec0;">Aucun matériel listé.</div>'}
+                 </div>
+               </div>
+            </div>
+
+          </div>
+
+          <div>
+            
+            <div class="section">
+              <div class="section-title">${icons.brain} PÉDAGOGIE</div>
+              <div class="description">
+                "${activity.description || 'Aucune description disponible.'}"
+              </div>
+              
+              <div style="margin-bottom: 12px;">
+                <span class="label" style="font-size:10px; text-transform:uppercase;">Objectifs:</span>
+                <div style="margin-top:4px;">
+                ${activity.objectives.length > 0 ?
+        activity.objectives.map(o => `<div class="list-item"><span class="checkbox"></span> ${o}</div>`).join('')
+        : '<span style="font-style:italic; font-size:10px;">Non définis.</span>'}
+                </div>
+              </div>
+
+              <div>
+                 <span class="label" style="font-size:10px; text-transform:uppercase;">Implication Jeunes (${activity.youthInvolvement?.level || 'Part.'}):</span>
+                 <div style="margin-top:4px;">
+                 ${(activity.youthInvolvement?.tasks || []).map(t => `<div class="list-item">- ${t}</div>`).join('')}
+                 </div>
+              </div>
+            </div>
+
+            <div class="section risk-section">
+              <div class="section-title risk-title">${icons.shield} SÉCURITÉ & RISQUES</div>
+              <div style="margin-bottom:10px;">
+                <div class="risk-label">DANGERS POTENTIELS:</div>
+                <div style="font-size:11px;">${activity.riskManagement.hazards.length > 0 ? activity.riskManagement.hazards.join(', ') : 'Aucun danger spécifique.'}</div>
+              </div>
+              <div style="margin-bottom:10px;">
+                 <div class="risk-label">PROTOCOLES:</div>
+                 ${activity.riskManagement.safetyProtocols.map(p => `<div class="list-item">• ${p}</div>`).join('')}
+              </div>
+              <div style="margin-top:10px; border-top:1px solid #feb2b2; padding-top:6px;">
+                <span class="risk-label">URGENCE:</span><br/>
+                <span style="font-weight:bold; font-size:12px;">${activity.riskManagement.emergencyContact}</span>
+              </div>
+            </div>
+
+            <div class="section">
+               <div class="section-title">NOTES TERRAIN / PLAN B</div>
+               <div style="min-height: 40px; font-size: 11px; color: #4a5568;">
+                 ${activity.backupPlan ? `<strong>Plan B:</strong> ${activity.backupPlan}` : '<em>Aucun plan B défini.</em>'}
+               </div>
+            </div>
+
+          </div>
+        </div>
+
+        <div class="signature-box signature-section">
+           <div class="sig-box">
+             <div class="sig-line"></div>
+             <span>Signature Responsable</span>
+           </div>
+           <div class="sig-box">
+             <div class="sig-line"></div>
+             <span>Signature Direction</span>
+           </div>
+        </div>
+
+        <div class="footer">
+          Généré par Planificateur MDJ - ${new Date().toLocaleDateString()}
+        </div>
+
+        <script>
+          window.onload = function() { window.print(); }
+        </script>
+      </body>
+      </html>
+    `;
+
+    printWindow.document.write(htmlContent);
+  };
+
+
+
+
+  // ... (inside the component)
+
+  const readiness = calculateActivityReadiness(activity);
 
   useEffect(() => {
-    setActivity(prev => ({ ...prev, preparationScore: readiness.percentage }));
-  }, [JSON.stringify(activity)]);
+    setActivity(prev => {
+      if (prev.preparationScore === readiness.percentage && prev.isMissingOnlyCost === readiness.isMissingOnlyCost) return prev;
+      return { ...prev, preparationScore: readiness.percentage, isMissingOnlyCost: readiness.isMissingOnlyCost };
+    });
+  }, [readiness.percentage, readiness.isMissingOnlyCost]);
 
-  const updateCustomList = (key: string, currentValues: string[], defaultValues: string[]) => {
-    const existingCustom = customSuggestions[key] || [];
-    const newValues = currentValues
-      .map(v => v ? v.trim() : "")
-      .filter(v => v !== "" && !defaultValues.includes(v) && !existingCustom.includes(v));
-    
-    if (newValues.length > 0) {
-      const updated = [...existingCustom, ...newValues];
-      setCustomSuggestions(prev => ({ ...prev, [key]: updated }));
-      try {
-        localStorage.setItem(`mdj_custom_${key}`, JSON.stringify(updated));
-      } catch (e) {
-        console.error(`Erreur sauvegarde custom ${key}`, e);
+  const updateActivity = (updates: Partial<Activity>) => {
+    setActivity(prev => {
+      let next = { ...prev, ...updates };
+
+      // Synchronisation type (legacy) <-> types (array)
+      if (updates.types && updates.types.length > 0 && !updates.type) {
+        next.type = updates.types[0];
+      } else if (updates.type && (!updates.types || updates.types.length === 0)) {
+        next.types = [updates.type];
+      }
+
+      // Automatisme : Type d'activité -> Axes PSOC
+      const typeForPsoc = updates.type || (updates.types && updates.types[0]);
+      if (typeForPsoc && (!prev.pedagogy?.psocTags || prev.pedagogy.psocTags.length === 0)) {
+        const suggestedPsoc = getPSOCFromType(typeForPsoc);
+        if (suggestedPsoc.length > 0) {
+          next.pedagogy = { ...next.pedagogy, psocTags: suggestedPsoc } as any;
+        }
+      }
+
+      // Automatisme : Objectifs C.A.R. -> Dimensions RMJQ
+      if (updates.objectives) {
+        const suggestedRmjq = getRMJQFromObjectives(updates.objectives);
+        if (suggestedRmjq.length > 0) {
+          const currentRmjq = prev.rmjqDimensions || [];
+          const combined = Array.from(new Set([...currentRmjq, ...suggestedRmjq]));
+          next.rmjqDimensions = combined;
+        }
+      }
+
+      // Automatisme : Aide aux devoirs -> Heures spécifiques (16:30 - 17:30)
+      const isHomeworkHelp = next.types?.includes(ActivityType.AIDE_DEVOIRS) || next.type === ActivityType.AIDE_DEVOIRS;
+      const wasHomeworkHelp = prev.types?.includes(ActivityType.AIDE_DEVOIRS) || prev.type === ActivityType.AIDE_DEVOIRS;
+
+      if (isHomeworkHelp && !wasHomeworkHelp) {
+        next.startTime = HOMEWORK_HELP_START_TIME;
+        next.endTime = HOMEWORK_HELP_END_TIME;
+      } else if (!isHomeworkHelp && wasHomeworkHelp) {
+        if (next.startTime === HOMEWORK_HELP_START_TIME && next.endTime === HOMEWORK_HELP_END_TIME) {
+          next.startTime = DEFAULT_START_TIME;
+          next.endTime = DEFAULT_END_TIME;
+        }
+      }
+
+      // Automatisme : Ratio d'encadrement suggéré
+      const isAnimation = next.types?.includes(ActivityType.ANIMATION) || next.type === ActivityType.ANIMATION;
+      const titleLower = (next.title || '').toLowerCase();
+      const isHighRisk = (next.types?.includes(ActivityType.PHYSIQUE) || next.types?.includes(ActivityType.ANIMATION)) || titleLower.includes('haut risque');
+      const isDangerous = isHighRisk && (titleLower.includes('escalade') || titleLower.includes('canot') || titleLower.includes('kayak') || titleLower.includes('piscine') || titleLower.includes('baignade'));
+      const isOuting = isAnimation && (titleLower.includes('sortie') || titleLower.includes('voyage') || titleLower.includes('excursion') || titleLower.includes('camping'));
+      const isCamp = isAnimation && (titleLower.includes('séjour') || titleLower.includes('camp') || titleLower.includes('nuit'));
+
+      if (!next.staffing.requiredRatio || next.staffing.requiredRatio === '1/15' || next.staffing.requiredRatio === '1/12' || next.staffing.requiredRatio === 'N/A' || next.staffing.requiredRatio === '') {
+        if (isDangerous) {
+          next.staffing.requiredRatio = '1/6';
+        } else if (isCamp) {
+          next.staffing.requiredRatio = 'Min. 2 staff';
+        } else if (isOuting) {
+          next.staffing.requiredRatio = '1/8';
+        } else if (isAnimation) {
+          next.staffing.requiredRatio = '1/12';
+        }
+      }
+
+      return next;
+    });
+  };
+
+  const updateRiskManagement = (updates: Partial<RiskManagement>) => {
+    setActivity(prev => ({ ...prev, riskManagement: { ...prev.riskManagement, ...updates } }));
+  };
+
+  const updateStaffing = (updates: Partial<Activity['staffing']>) => {
+    setActivity(prev => ({ ...prev, staffing: { ...prev.staffing, ...updates } }));
+  };
+
+  const updateBudget = (updates: Partial<Activity['budget']>) => {
+    setActivity(prev => ({ ...prev, budget: { ...prev.budget, ...updates } }));
+  };
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files) return;
+    const newDocuments: ActivityDocument[] = [];
+    const promises: Promise<void>[] = [];
+    Array.from(files).forEach((file: File) => {
+      const promise = new Promise<void>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          if (e.target?.result) {
+            newDocuments.push({
+              id: `doc-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+              name: file.name,
+              type: file.type || file.name.split('.').pop() || 'unknown',
+              size: file.size,
+              url: e.target.result as string,
+              dateAdded: Date.now()
+            });
+          }
+          resolve();
+        };
+        reader.readAsDataURL(file);
+      });
+      promises.push(promise);
+    });
+    Promise.all(promises).then(() => {
+      setActivity(prev => ({ ...prev, documents: [...(prev.documents || []), ...newDocuments] }));
+    });
+  };
+
+  const handleDeleteFile = (docId: string) => {
+    setActivity(prev => ({ ...prev, documents: (prev.documents || []).filter(d => d.id !== docId) }));
+  };
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const handleSaveInternal = async () => {
+    // Only block if the title is truly empty (schema requirement)
+    if (!activity.title || (activity.title || '').trim().length === 0) {
+      alert("Un titre est requis pour enregistrer l'activité.");
+      setActiveTab('pedagogy');
+      return;
+    }
+
+    const criticalFails = (readiness.checks || []).filter((c: any) => c.isCritical && !c.met);
+
+    try {
+      if (activity.youthInvolvement?.tasks) {
+        addSuggestions('youthTasks', activity.youthInvolvement.tasks);
+      }
+      if (activity.objectives) {
+        addSuggestions('objectives', activity.objectives);
+      }
+      if (activity.evaluationCriteria) {
+        addSuggestions('evaluationCriteria', activity.evaluationCriteria);
+      }
+      if (activity.materials) {
+        addSuggestions('materials', activity.materials.map((m: any) => typeof m === 'string' ? m : m.item));
+      }
+      if (activity.materialReservations) {
+        addSuggestions('materials', activity.materialReservations.map((r: any) => r.itemName));
+      }
+      if (activity.riskManagement?.hazards) {
+        addSuggestions('hazards', activity.riskManagement.hazards);
+      }
+      if (activity.riskManagement?.safetyProtocols) {
+        addSuggestions('safety', activity.riskManagement.safetyProtocols);
+      }
+      if (activity.logistics?.venueName) {
+        addSuggestions('venueName', [activity.logistics.venueName]);
+      }
+      if (activity.checklist) {
+        addSuggestions('checklist', activity.checklist.map((c: any) => c.item));
+      }
+
+      const validated = parseActivityStrict(activity);
+      await onSave(validated);
+      onClose();
+    } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        alert("Erreur de validation: " + err.issues.map(i => `${i.path.join('.')}: ${i.message}`).join(", "));
+      } else {
+        console.error("Save error:", err);
+        alert("Une erreur inattendue est survenue lors de la sauvegarde.");
       }
     }
   };
 
-  const handleSaveInternal = () => {
-      updateCustomList('supportStaff', activity.staffing.supportStaff, DEFAULT_SUPPORT_STAFF);
-      updateCustomList('objectives', activity.objectives, SUGGESTIONS.objectives);
-      updateCustomList('tasks', activity.youthInvolvement.tasks || [], SUGGESTIONS.tasks);
-      updateCustomList('evaluation', activity.evaluationCriteria || [], SUGGESTIONS.evaluation);
-      updateCustomList('materials', activity.materials.map(m => m.item), SUGGESTIONS.materials);
-      updateCustomList('hazards', activity.riskManagement.hazards, SUGGESTIONS.hazards);
-      updateCustomList('protocols', activity.riskManagement.safetyProtocols, SUGGESTIONS.protocols);
-      updateCustomList('siteRules', activity.riskManagement.siteRules || [], SUGGESTIONS.siteRules);
-      updateCustomList('compliance', activity.riskManagement.complianceRequirements || [], SUGGESTIONS.compliance);
-      updateCustomList('budget', activity.budget.items.map(i => i.description), SUGGESTIONS.budget);
-      
-      const qualifs = activity.staffing.specialQualifications 
-          ? activity.staffing.specialQualifications.split(',').map(s => s.trim()) 
-          : [];
-      updateCustomList('qualifications', qualifs, SUGGESTIONS.qualifications);
-
-      onSave(activity);
-  };
-
-  const getCombinedList = (key: string, defaultList: string[]) => {
-      const custom = customSuggestions[key] || [];
-      return Array.from(new Set([...defaultList, ...custom]));
-  };
-
-  const inputClass = "w-full bg-mdj-black border border-white/10 rounded-lg p-2 text-white focus:ring-1 focus:ring-mdj-cyan focus:border-mdj-cyan placeholder-gray-600 transition-all";
-  const labelClass = "text-xs font-bold text-mdj-cyan uppercase tracking-wider mb-1 block";
-
-  const QuickSuggestions = ({ list, onSelect, colorClass = "bg-white/5 text-gray-400 hover:text-white border-white/10" }: { list: string[], onSelect: (val: string) => void, colorClass?: string }) => (
-    <div className="flex flex-wrap gap-2 mb-3">
-        {list.map((item, i) => (
-            <button
-                key={i}
-                onClick={() => onSelect(item)}
-                className={`text-[10px] px-2 py-1 rounded-full border transition-all hover:scale-105 flex items-center gap-1 ${colorClass}`}
-            >
-                <PlusCircle className="w-3 h-3" /> {item}
-            </button>
-        ))}
-    </div>
-  );
+  const isCreator = !activity.createdByEmail || activity.createdByEmail === userEmail || isSuperAdmin(userEmail);
+  const inputClass = "w-full bg-white dark:bg-mdj-black border border-slate-200 dark:border-white/10 rounded-lg p-2 text-slate-900 dark:text-white focus:ring-1 focus:ring-mdj-cyan focus:border-mdj-cyan placeholder-slate-400 dark:placeholder-gray-600 transition-all";
+  const labelClass = "text-xs font-bold text-cyan-600 dark:text-mdj-cyan uppercase tracking-wider mb-1 block";
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-mdj-dark border border-white/10 rounded-3xl w-full max-w-6xl max-h-[95vh] shadow-[0_0_50px_rgba(0,0,0,0.5)] flex flex-col relative overflow-hidden">
-        
-        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-mdj-cyan via-mdj-magenta to-mdj-orange"></div>
+    <div className="fixed inset-0 z-[100] sm:p-4 flex items-center justify-center bg-black/60 backdrop-blur-sm transition-all duration-300">
+      <div className="bg-slate-50 dark:bg-mdj-dark border border-slate-200 dark:border-white/10 rounded-none sm:rounded-3xl w-full max-w-6xl h-full sm:h-[90vh] shadow-2xl dark:shadow-[0_0_50px_rgba(0,0,0,0.5)] flex flex-col relative overflow-hidden transition-all">
 
-        <div className="p-6 border-b border-white/10 flex justify-between items-start bg-mdj-dark">
-          <div className="flex-1 mr-6">
-            <div className="flex items-center gap-4 mb-2 w-full">
-               <input 
-                 className="text-3xl font-display font-bold text-white bg-transparent border-b border-transparent hover:border-white/20 focus:border-mdj-cyan focus:ring-0 px-0 w-full leading-tight placeholder-gray-600 transition-colors"
-                 value={activity.title}
-                 onChange={(e) => setActivity({...activity, title: e.target.value})}
-                 placeholder="Titre de l'activité"
-               />
-               
-               <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider border shrink-0 ${readiness.percentage >= 80 ? 'bg-mdj-cyan/10 text-mdj-cyan border-mdj-cyan/50' : 'bg-mdj-orange/10 text-mdj-orange border-mdj-orange/50'}`}>
-                 {readiness.percentage}% Prêt
-               </span>
-            </div>
-            <div className="flex flex-wrap gap-4 text-sm text-gray-400 items-center">
-              <div className="flex items-center gap-1 group">
-                <CheckSquare className="w-4 h-4 text-mdj-cyan group-hover:text-white transition-colors"/>
-                <select 
-                  className="bg-transparent border-none text-gray-400 hover:text-white focus:ring-0 p-0 text-sm cursor-pointer transition-colors max-w-[200px] truncate"
-                  value={activity.type}
-                  onChange={(e) => setActivity({...activity, type: e.target.value as ActivityType})}
+        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-mdj-cyan via-mdj-magenta to-mdj-orange z-10"></div>
+
+        {/* HEADER */}
+        <div className="p-4 sm:p-6 border-b border-slate-200 dark:border-white/10 flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white dark:bg-mdj-dark gap-4 sm:gap-0 transition-all">
+          <div className="flex-1 w-full sm:mr-6">
+            <div className="flex items-center gap-3 mb-2 w-full">
+              <input
+                className={cn(
+                  "text-xl sm:text-3xl font-display font-bold text-slate-800 dark:text-white bg-transparent border-b focus:ring-0 px-0 w-full leading-tight placeholder-slate-400 dark:placeholder-gray-600 transition-all",
+                  (activity.title || '').trim().length < 3 && !activity.isMDJClosed
+                    ? "border-red-500/50 shadow-[0_4px_10px_-2px_rgba(239,68,68,0.2)] animate-pulse-slow font-black bg-red-500/5"
+                    : "border-transparent hover:border-slate-200 dark:hover:border-white/20 focus:border-mdj-cyan"
+                )}
+                value={activity.title}
+                onChange={(e) => setActivity({ ...activity, title: e.target.value })}
+                placeholder="Titre de l'activité"
+              />
+              <div className="flex items-center gap-2 shrink-0 self-start sm:self-center mt-1 sm:mt-0">
+                <AICorrectButton 
+                  text={activity.title} 
+                  onCorrect={(corrected) => setActivity({ ...activity, title: corrected })}
+                  className="mr-2"
+                />
+                {readiness.checks.filter((c: any) => c.isCritical && !c.met).length > 0 && (
+                  <div className="relative group/missing">
+                    <div
+                      onClick={() => {
+                        const firstFail = readiness.checks.find((c: any) => c.isCritical && !c.met);
+                        if (firstFail) setActiveTab(firstFail.tab as TabId);
+                      }}
+                      className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-red-500 text-white text-[10px] font-black uppercase tracking-tighter cursor-pointer hover:bg-red-600 transition-all shadow-lg shadow-red-500/20 animate-bounce-subtle"
+                    >
+                      <AlertCircle className="w-3 h-3" />
+                      <span>{readiness.checks.filter((c: any) => c.isCritical && !c.met).length} MANQUANTS</span>
+                    </div>
+
+                    <div className="absolute top-full right-0 mt-2 w-64 bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-red-200 dark:border-red-900/50 p-4 opacity-0 pointer-events-none group-hover/missing:opacity-100 group-hover/missing:pointer-events-auto transition-all z-[110] transform origin-top-right group-hover/missing:translate-y-0 translate-y-2">
+                      <div className="text-[10px] font-black text-red-500 uppercase tracking-widest mb-3 border-b border-red-100 dark:border-red-900/30 pb-2">
+                        Éléments obligatoires à remplir :
+                      </div>
+                      <div className="space-y-2">
+                        {readiness.checks.filter((c: any) => c.isCritical && !c.met).map((c: any, i: number) => (
+                          <div
+                            key={i}
+                            onClick={() => setActiveTab(c.tab as TabId)}
+                            className="flex items-start gap-2 text-[11px] text-slate-600 dark:text-slate-300 hover:text-red-500 cursor-pointer transition-colors"
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-red-500 mt-1 shrink-0" />
+                            <span>{c.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <button
+                  onClick={() => {
+                    const firstFail = readiness.checks.find((c: any) => c.isCritical && !c.met);
+                    if (firstFail) setActiveTab(firstFail.tab as TabId);
+                  }}
+                  className={`px-2 py-0.5 sm:px-3 sm:py-1 rounded-full text-[10px] sm:text-xs font-bold uppercase tracking-wider border shrink-0 transition-all hover:scale-105 active:scale-95 ${(!readiness.checks.some((c: any) => c.isCritical && !c.met) && readiness.percentage >= 80) ? 'bg-mdj-cyan/10 text-mdj-cyan border-mdj-cyan/50' : 'bg-mdj-orange/10 text-mdj-orange border-mdj-orange/50'}`}
                 >
-                  {Object.values(ActivityType).map(t => (
-                    <option key={t} value={t} className="bg-mdj-dark text-white">{t}</option>
+                  {readiness.percentage}% Prêt
+                </button>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-3 text-xs sm:text-sm text-gray-400 items-center mt-2">
+              <div className="flex items-center gap-1 group">
+                <CheckSquare className="w-3 h-3 sm:w-4 sm:h-4 text-cyan-500 dark:text-mdj-cyan group-hover:text-slate-900 dark:group-hover:text-white transition-colors" />
+                <select
+                  className={cn(
+                    "bg-transparent border focus:ring-0 p-1 rounded-lg text-xs sm:text-sm cursor-pointer transition-all uppercase font-bold",
+                    (activity.types || []).length === 0 && !activity.isMDJClosed
+                      ? "text-red-500 border-red-500 bg-red-500/10 font-black animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.3)]"
+                      : "text-slate-500 dark:text-gray-400 border-transparent hover:text-slate-900 dark:hover:text-white hover:border-slate-300 dark:hover:border-white/20"
+                  )}
+                  value={activity.type || ''}
+                  onChange={(e) => {
+                    const newType = e.target.value as any;
+                    updateActivity({ type: newType, types: [newType] });
+                  }}
+                >
+                  <option value="" disabled className="bg-white dark:bg-mdj-dark">⚠️ SÉLECTIONNEZ UN TYPE</option>
+                  {Object.values(ActivityType).filter(t => typeof t === 'string').map(t => (
+                    <option key={t as string} value={t as string} className="bg-white dark:bg-mdj-dark text-slate-900 dark:text-white">{t as string}</option>
                   ))}
                 </select>
               </div>
-              <span className="text-white/20">•</span>
-              <div className="flex items-center hover:text-white transition-colors">
-                <input 
+              <div className="flex items-center hover:text-slate-900 dark:hover:text-white transition-colors">
+                <input
                   type="date"
-                  className="bg-transparent border-none text-gray-400 hover:text-white focus:ring-0 p-0 text-sm font-sans cursor-pointer uppercase tracking-wide"
+                  className="bg-transparent border-none text-slate-500 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white focus:ring-0 p-0 text-xs sm:text-sm font-sans cursor-pointer uppercase tracking-wide"
                   value={activity.date}
-                  onChange={(e) => setActivity({...activity, date: e.target.value})}
+                  onChange={(e) => setActivity({ ...activity, date: e.target.value, isPostponed: false })}
                 />
               </div>
-              <span className="text-white/20">•</span>
-              <span className="flex items-center gap-1 font-bold text-white bg-white/5 px-2 py-0.5 rounded border border-white/10">
-                <Clock className="w-3 h-3 text-mdj-magenta"/> {activity.startTime} - {activity.endTime}
-              </span>
+              <div className="text-white/20 hidden sm:block">•</div>
+              <div className={cn(
+                "flex items-center gap-1 font-bold text-slate-700 dark:text-white bg-slate-100 dark:bg-white/5 px-2 py-0.5 rounded border transition-all",
+                (!activity.startTime || !activity.endTime) && !activity.isMDJClosed
+                  ? "border-red-500 bg-red-500/10 text-red-500 animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.3)]"
+                  : "border-slate-200 dark:border-white/10"
+              )}>
+                <Clock className="w-3 h-3 text-pink-500 dark:text-mdj-magenta" />
+                <div className="flex items-center gap-1">
+                  <input
+                    type="time"
+                    className="bg-transparent border-none p-0 w-20 text-center text-xs sm:text-sm focus:ring-0 cursor-pointer"
+                    value={activity.startTime}
+                    onChange={(e) => updateActivity({ startTime: e.target.value })}
+                  />
+                  <span>-</span>
+                  <input
+                    type="time"
+                    className="bg-transparent border-none p-0 w-20 text-center text-xs sm:text-sm focus:ring-0 cursor-pointer"
+                    value={activity.endTime}
+                    onChange={(e) => updateActivity({ endTime: e.target.value })}
+                  />
+                  {(() => {
+                    const isHW = activity.types?.includes(ActivityType.AIDE_DEVOIRS) || activity.type === ActivityType.AIDE_DEVOIRS;
+                    const targetStart = isHW ? HOMEWORK_HELP_START_TIME : DEFAULT_START_TIME;
+                    const targetEnd = isHW ? HOMEWORK_HELP_END_TIME : DEFAULT_END_TIME;
+
+                    if (activity.startTime !== targetStart || activity.endTime !== targetEnd) {
+                      return (
+                        <button
+                          key="time-reset-btn"
+                          onClick={() => updateActivity({ startTime: targetStart, endTime: targetEnd })}
+                          className="ml-1 p-0.5 rounded-full hover:bg-slate-200 dark:hover:bg-white/20 text-slate-400 dark:text-gray-500 hover:text-indigo-500 transition-all"
+                          title={`Réinitialiser aux heures par défaut (${targetStart}-${targetEnd})`}
+                        >
+                          <History className="w-3 h-3" />
+                        </button>
+                      );
+                    }
+                    return null;
+                  })()}
+                </div>
+              </div>
+              <div className="text-white/20 hidden sm:block">•</div>
+              <div
+                onClick={() => setActiveTab('staff')}
+                className={cn(
+                  "flex items-center gap-1.5 font-bold px-3 py-1.5 rounded-lg text-xs sm:text-sm shadow-md transition-all cursor-pointer whitespace-nowrap",
+                  activity.staffing?.leadStaff || activity.isMDJClosed
+                    ? 'text-black bg-gradient-to-r from-mdj-cyan to-cyan-400 border border-mdj-cyan/50'
+                    : 'text-red-500 bg-red-500/10 border-2 border-red-500 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.4)]'
+                )}
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span className="max-w-[120px] sm:max-w-none truncate">{activity.staffing?.leadStaff || '⚠ Responsable'}</span>
+              </div>
             </div>
           </div>
-          <div className="flex gap-3 shrink-0">
-            <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full text-gray-400 hover:text-white transition-colors">
-              <X className="w-6 h-6" />
+          <div className="flex gap-2 sm:gap-3 shrink-0 absolute top-4 right-4 sm:static bg-white/80 dark:bg-mdj-dark/80 backdrop-blur-sm sm:backdrop-blur-none p-1 sm:p-0 rounded-full sm:rounded-none z-20">
+            <button
+              onClick={() => setActivity({ ...activity, isPostponed: !activity.isPostponed })}
+              className={cn(
+                "flex items-center gap-2 px-3 py-1.5 rounded-xl border font-bold text-xs uppercase tracking-wider transition-all",
+                activity.isPostponed
+                  ? "bg-orange-500/20 text-orange-400 border-orange-500/50 shadow-[0_0_15px_rgba(249,115,22,0.2)]"
+                  : "bg-white/5 text-gray-400 border-white/10 hover:bg-orange-500/10 hover:text-orange-400 hover:border-orange-500/30"
+              )}
+              title={activity.isPostponed ? "Annuler le report" : "Reporter l'activité"}
+            >
+              <History className="w-4 h-4" />
+              {activity.isPostponed ? "À Reporter" : "Reporter"}
             </button>
+            <div className="w-px h-8 bg-slate-200 dark:bg-white/10 hidden sm:block mx-1"></div>
+            <button onClick={onClose} className="p-2 hover:bg-slate-100 dark:hover:bg-white/10 rounded-full text-slate-400 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white transition-colors"><X className="w-6 h-6" /></button>
           </div>
         </div>
 
-        <div className="flex flex-1 overflow-hidden">
-          <div className="w-64 bg-mdj-black/50 border-r border-white/10 flex flex-col overflow-y-auto shrink-0">
-             <nav className="p-4 space-y-1">
-               {[
-                { id: 'checklist', label: 'Contrôle & Qualité', icon: LayoutDashboard },
-                { id: 'pedagogy', label: 'Par et Pour les Jeunes', icon: Hand },
-                { id: 'logistics', label: 'Logistique & Transport', icon: MapPin },
-                { id: 'materials', label: 'Matériel', icon: Truck },
-                { id: 'risk', label: 'Conformité & Risques', icon: ShieldAlert },
-                { id: 'staff', label: 'Équipe & Adultes', icon: Users },
-                { id: 'budget', label: 'Budget', icon: DollarSign },
-              ].map(tab => (
+        {/* CONTENT */}
+        <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
+          {/* NAVIGATION LATERALE (Desktop) / HORIZONTALE (Mobile) */}
+          <div className="w-full md:w-64 bg-slate-50 dark:bg-mdj-black/50 border-b md:border-b-0 md:border-r border-slate-200 dark:border-white/10 flex flex-row md:flex-col overflow-x-auto md:overflow-y-auto shrink-0 custom-scrollbar z-10 sticky top-0 md:relative">
+            <nav className="p-2 md:p-4 flex md:flex-col gap-2 md:space-y-1 min-w-max">
+              {tabs.map((tab, idx) => (
                 <button
                   key={tab.id}
-                  onClick={() => setActiveTab(tab.id as any)}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all border border-transparent ${
-                    activeTab === tab.id 
-                      ? 'bg-mdj-cyan/10 text-mdj-cyan border-mdj-cyan/20 shadow-[0_0_10px_rgba(0,255,255,0.1)]' 
-                      : 'text-gray-400 hover:bg-white/5 hover:text-white'
-                  }`}
+                  draggable
+                  onDragStart={() => { dragTab.current = idx; }}
+                  onDragEnter={() => { dragOverTab.current = idx; }}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDragEnd={() => {
+                    if (dragTab.current === null || dragOverTab.current === null || dragTab.current === dragOverTab.current) return;
+                    const reordered = [...tabs];
+                    const [moved] = reordered.splice(dragTab.current, 1);
+                    reordered.splice(dragOverTab.current, 0, moved);
+                    setTabs(reordered);
+                    saveTabOrder(reordered, userEmail);
+                    dragTab.current = null;
+                    dragOverTab.current = null;
+                  }}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-3 rounded-xl text-xs sm:text-sm font-bold transition-all border border-transparent whitespace-nowrap group relative ${activeTab === tab.id ? 'bg-cyan-50 dark:bg-mdj-cyan/10 text-cyan-700 dark:text-mdj-cyan border-cyan-200 dark:border-mdj-cyan/20 shadow-sm dark:shadow-[0_0_10px_rgba(0,255,255,0.1)]' : 'text-slate-500 dark:text-gray-400 hover:bg-white/50 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white'}`}
                 >
-                  <tab.icon className={`w-4 h-4 ${activeTab === tab.id ? 'text-mdj-cyan' : 'text-gray-500'}`} />
+                  <GripVertical className="w-3 h-3 text-gray-600 opacity-0 group-hover:opacity-100 cursor-grab active:cursor-grabbing transition-opacity shrink-0 hidden md:block" />
+                  <tab.icon className={`w-3 h-3 sm:w-4 sm:h-4 ${activeTab === tab.id ? 'text-mdj-cyan' : 'text-gray-500'}`} />
                   {tab.label}
+                  {readiness.checks.some((c: any) => c.tab === tab.id && c.isCritical && !c.met) && (
+                    <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full animate-pulse shadow-[0_0_5px_rgba(239,68,68,0.5)] z-20"></span>
+                  )}
                 </button>
               ))}
-             </nav>
-             <div className="mt-auto p-6 bg-gradient-to-t from-mdj-cyan/10 to-transparent border-t border-white/5">
-               <h4 className="text-xs font-bold text-mdj-cyan uppercase mb-2">Mission La Piaule</h4>
-               <p className="text-xs text-gray-400 leading-relaxed font-light">
-                 Un milieu de vie animé, une zone safe pour devenir <strong className="text-white">Critique, Actif et Responsable</strong>.
-               </p>
-             </div>
+            </nav>
           </div>
 
-          <div className="flex-1 overflow-y-auto bg-mdj-dark p-8 custom-scrollbar">
+          <div className="flex-1 overflow-y-auto bg-white dark:bg-mdj-dark p-4 md:p-8 custom-scrollbar transition-all">
+
+            {/* CHECKLIST */}
             {activeTab === 'checklist' && (
-              <div className="space-y-8 max-w-4xl mx-auto animate-in fade-in duration-300">
-                <div className="flex justify-between items-center">
-                  <h3 className="font-display font-bold text-white text-xl">Liste de vérification RMJQ</h3>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                   <div className="col-span-2 bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-lg">
-                      <div className="grid grid-cols-1 gap-3">
-                        {readiness.checks.map((check, idx) => (
-                          <button 
-                            key={idx}
-                            onClick={() => setActiveTab(check.tab as any)}
-                            className="flex items-center justify-between p-3 rounded-xl hover:bg-white/5 transition-colors group text-left border border-white/5 hover:border-white/10"
-                          >
-                            <div className="flex items-center gap-4">
-                              {check.met ? (
-                                <div className="w-6 h-6 rounded-full bg-green-500/20 flex items-center justify-center text-green-400 shadow-[0_0_5px_rgba(74,222,128,0.3)]"><CheckCircle className="w-4 h-4" /></div>
-                              ) : (
-                                <div className="w-6 h-6 rounded-full bg-white/5 flex items-center justify-center text-gray-500 group-hover:bg-mdj-cyan/10 group-hover:text-mdj-cyan"><Circle className="w-4 h-4" /></div>
-                              )}
-                              <span className={check.met ? "text-white font-medium" : "text-gray-400 group-hover:text-mdj-cyan transition-colors"}>
-                                {check.label}
-                              </span>
-                            </div>
-                            <span className="text-xs text-gray-600 font-mono group-hover:text-white transition-colors">Go &rarr;</span>
-                          </button>
-                        ))}
-                      </div>
-                   </div>
-                   <div className="space-y-6">
-                      <div className="bg-gradient-to-br from-mdj-cyan to-blue-600 rounded-2xl p-6 text-black text-center shadow-[0_0_20px_rgba(0,255,255,0.3)]">
-                        <div className="text-5xl font-black mb-1 tracking-tighter">{readiness.percentage}%</div>
-                        <div className="text-black/60 text-sm font-bold uppercase tracking-widest">Niveau de préparation</div>
-                      </div>
-                      <div className="bg-mdj-black/30 rounded-2xl p-6 border border-white/10">
-                        <h4 className="font-bold text-white mb-3 text-sm flex items-center gap-2"><BrainCircuit className="w-4 h-4 text-mdj-magenta"/> Dimensions</h4>
-                        <div className="flex flex-wrap gap-2">
-                          {activity.rmjqDimensions?.length > 0 ? activity.rmjqDimensions.map((dim, i) => (
-                            <span key={i} className="px-3 py-1 bg-white/5 border border-white/10 rounded-full text-xs font-semibold text-mdj-cyan shadow-sm">
-                              {dim}
-                            </span>
-                          )) : (
-                            <span className="text-xs text-gray-500 italic">Aucune dimension RMJQ définie</span>
-                          )}
-                        </div>
-                      </div>
-                   </div>
-                </div>
-              </div>
+              <ChecklistTab
+                activity={activity}
+                updateActivity={updateActivity}
+                setActiveTab={setActiveTab}
+                readiness={readiness}
+              />
             )}
 
+            {/* PEDAGOGY */}
             {activeTab === 'pedagogy' && (
-              <div className="space-y-8 max-w-4xl mx-auto animate-in fade-in duration-300">
-                <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm relative overflow-hidden group">
-                  <div className="absolute top-0 left-0 w-1 h-full bg-mdj-cyan shadow-[0_0_10px_#00FFFF]"></div>
-                  <label className="block text-sm font-bold text-gray-400 mb-2 uppercase tracking-wide">Description de l'activité</label>
-                  <textarea 
-                    className="w-full p-0 border-none resize-none focus:ring-0 text-white text-lg leading-relaxed placeholder-gray-600 bg-transparent"
-                    value={activity.description}
-                    onChange={e => setActivity({...activity, description: e.target.value})}
-                    placeholder="Décrivez le déroulement de l'activité..."
-                    rows={3}
-                  />
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                  <div className="bg-mdj-black/30 rounded-2xl border border-white/10 shadow-sm overflow-hidden flex flex-col">
-                    <div className="bg-white/5 px-6 py-4 border-b border-white/10">
-                      <h3 className="font-bold text-white flex items-center gap-2">
-                        <BrainCircuit className="w-5 h-5 text-mdj-magenta"/> Objectifs Pédagogiques
-                      </h3>
-                      <p className="text-xs text-gray-500 mt-1">Viser : Critique, Actif, Responsable</p>
-                    </div>
-                    <div className="p-6 space-y-3 flex-1">
-                      <QuickSuggestions 
-                        list={getCombinedList('objectives', SUGGESTIONS.objectives)} 
-                        onSelect={(val) => setActivity({...activity, objectives: [...activity.objectives, val]})} 
-                        colorClass="bg-mdj-magenta/10 text-mdj-magenta border-mdj-magenta/30 hover:bg-mdj-magenta hover:text-black"
-                      />
-                      {activity.objectives.map((obj, i) => (
-                        <div key={i} className="flex gap-2 items-start">
-                          <div className="mt-2 w-1.5 h-1.5 rounded-full bg-mdj-magenta shrink-0 shadow-[0_0_5px_#FF00FF]"></div>
-                          <input 
-                            className="flex-1 border-b border-white/10 focus:border-mdj-magenta focus:ring-0 p-1 text-sm bg-transparent text-gray-300 focus:text-white transition-colors" 
-                            value={obj} 
-                            onChange={(e) => {
-                              const newObjs = [...activity.objectives];
-                              newObjs[i] = e.target.value;
-                              setActivity({...activity, objectives: newObjs});
-                            }} 
-                          />
-                          <button onClick={() => {
-                             const newObjs = activity.objectives.filter((_, idx) => idx !== i);
-                             setActivity({...activity, objectives: newObjs});
-                          }} className="text-gray-500 hover:text-red-500"><X className="w-4 h-4"/></button>
-                        </div>
-                      ))}
-                      <button 
-                        onClick={() => setActivity({...activity, objectives: [...activity.objectives, ""]})}
-                        className="text-sm text-mdj-magenta font-medium hover:underline mt-2 inline-flex items-center gap-1 hover:text-white transition-colors"
-                      >
-                         <PlusCircle className="w-3 h-3"/> Ajouter manuellement
-                      </button>
-                    </div>
-                  </div>
-                  <div className="bg-mdj-black/30 rounded-2xl border border-white/10 shadow-sm overflow-hidden flex flex-col">
-                    <div className="bg-white/5 px-6 py-4 border-b border-white/10">
-                      <h3 className="font-bold text-white flex items-center gap-2">
-                        <Hand className="w-5 h-5 text-mdj-cyan"/> Implication des Jeunes
-                      </h3>
-                      <p className="text-xs text-mdj-cyan/80 mt-1">Approche "Par et Pour"</p>
-                    </div>
-                    <div className="p-6 space-y-4 flex-1">
-                      <div>
-                        <label className={labelClass}>Niveau d'implication</label>
-                        <select 
-                          className={inputClass}
-                          value={activity.youthInvolvement?.level || 'Participation'}
-                          onChange={e => setActivity({...activity, youthInvolvement: { ...activity.youthInvolvement, level: e.target.value as any }})}
-                        >
-                          <option value="Participation">Participation (Simple)</option>
-                          <option value="Consultation">Consultation (Donnent leur avis)</option>
-                          <option value="Organisation">Organisation (Co-organisateurs)</option>
-                          <option value="Animation">Animation (Leader / Animent)</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className={labelClass}>Tâches déléguées aux jeunes</label>
-                        <QuickSuggestions 
-                            list={getCombinedList('tasks', SUGGESTIONS.tasks)}
-                            onSelect={(val) => {
-                                const currentTasks = activity.youthInvolvement?.tasks || [];
-                                setActivity({...activity, youthInvolvement: { ...activity.youthInvolvement, tasks: [...currentTasks, val] }});
-                            }}
-                            colorClass="bg-mdj-cyan/10 text-mdj-cyan border-mdj-cyan/30 hover:bg-mdj-cyan hover:text-black"
-                        />
-                        <div className="space-y-2">
-                          {(activity.youthInvolvement?.tasks || []).map((task, i) => (
-                            <div key={i} className="flex gap-2 items-center">
-                              <span className="text-mdj-cyan">•</span> 
-                              <input
-                                className="flex-1 bg-transparent border-b border-white/10 focus:border-mdj-cyan focus:ring-0 p-1 text-sm text-gray-300 focus:text-white transition-colors"
-                                value={task}
-                                onChange={(e) => {
-                                    const newTasks = [...(activity.youthInvolvement?.tasks || [])];
-                                    newTasks[i] = e.target.value;
-                                    setActivity({...activity, youthInvolvement: {...activity.youthInvolvement, tasks: newTasks}});
-                                }}
-                              />
-                              <button className="text-gray-500 hover:text-red-500" onClick={() => {
-                                const newTasks = activity.youthInvolvement.tasks.filter((_, idx) => idx !== i);
-                                setActivity({...activity, youthInvolvement: {...activity.youthInvolvement, tasks: newTasks}});
-                              }}><X className="w-3 h-3"/></button>
-                            </div>
-                          ))}
-                        </div>
-                        <button 
-                          onClick={() => {
-                            const currentTasks = activity.youthInvolvement?.tasks || [];
-                            setActivity({...activity, youthInvolvement: { ...activity.youthInvolvement, tasks: [...currentTasks, ""] }});
-                          }}
-                          className="text-xs text-mdj-cyan font-bold hover:underline mt-3 block"
-                        >
-                          + Ajouter manuellement
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm">
-                  <label className="block text-sm font-bold text-white mb-2">Critères d'évaluation (Bilan)</label>
-                  <p className="text-xs text-gray-500 mb-3">Comment saurons-nous si l'activité a été un succès éducatif ?</p>
-                  <QuickSuggestions 
-                     list={getCombinedList('evaluation', SUGGESTIONS.evaluation)}
-                     onSelect={(val) => setActivity({...activity, evaluationCriteria: [...(activity.evaluationCriteria || []), val]})}
-                     colorClass="bg-mdj-yellow/10 text-mdj-yellow border-mdj-yellow/30 hover:bg-mdj-yellow hover:text-black"
-                  />
-                  <div className="space-y-2">
-                    {(activity.evaluationCriteria || []).map((crit, i) => (
-                      <div key={i} className="flex gap-2">
-                         <input 
-                            className="flex-1 p-2 border border-white/10 rounded-lg text-sm bg-mdj-black text-white focus:border-mdj-yellow focus:ring-1 focus:ring-mdj-yellow placeholder-gray-600" 
-                            value={crit} 
-                            onChange={(e) => {
-                              const newCrits = [...(activity.evaluationCriteria || [])];
-                              newCrits[i] = e.target.value;
-                              setActivity({...activity, evaluationCriteria: newCrits});
-                            }} 
-                          />
-                          <button onClick={() => {
-                             const newCrits = activity.evaluationCriteria.filter((_, idx) => idx !== i);
-                             setActivity({...activity, evaluationCriteria: newCrits});
-                          }} className="text-gray-500 hover:text-red-500"><X className="w-4 h-4"/></button>
-                      </div>
-                    ))}
-                    <button 
-                      onClick={() => setActivity({...activity, evaluationCriteria: [...(activity.evaluationCriteria || []), ""]})}
-                      className="text-sm text-mdj-yellow font-medium hover:underline hover:text-white transition-colors"
-                    >+ Ajouter un critère manuellement</button>
-                  </div>
-                </div>
-              </div>
+              <PedagogyTab
+                activity={activity}
+                updateActivity={updateActivity}
+                updateYouthInvolvement={updateYouthInvolvement}
+                autoSuggestAll={autoSuggestAll}
+                isGenerating={isGenerating}
+                readiness={readiness}
+              />
             )}
 
+            {/* LOGISTICS */}
             {activeTab === 'logistics' && (
-              <div className="space-y-6 max-w-4xl mx-auto animate-in fade-in duration-300">
-                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                   <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm">
-                      <h3 className="font-bold text-white mb-4 flex items-center gap-2"><Clock className="w-5 h-5 text-mdj-cyan"/> Horaires de l'activité</h3>
-                      <div className="grid grid-cols-2 gap-4 mb-4">
-                        <div>
-                          <label className={labelClass}>Heure de début</label>
-                          <input type="time" className={inputClass} value={activity.startTime} onChange={e => setActivity({...activity, startTime: e.target.value})} />
-                        </div>
-                        <div>
-                          <label className={labelClass}>Heure de fin</label>
-                          <input type="time" className={inputClass} value={activity.endTime} onChange={e => setActivity({...activity, endTime: e.target.value})} />
-                        </div>
-                      </div>
-                      <hr className="border-white/5 my-4"/>
-                      <h3 className="font-bold text-white mb-4 flex items-center gap-2"><MapPin className="w-5 h-5 text-mdj-cyan"/> Lieu & Rendez-vous</h3>
-                      <div className="space-y-4">
-                        <div className="flex justify-between items-end">
-                            <label className={labelClass}>Nom du lieu (Requis)</label>
-                            <button 
-                                onClick={() => setActivity(prev => ({
-                                    ...prev,
-                                    logistics: {
-                                        ...prev.logistics,
-                                        venueName: 'MDJ (Aréna Jérôme-Cotnoir)',
-                                        address: '5225 Rue de Courcelette, Trois-Rivières, QC G8Y 4L4',
-                                        phoneNumber: '(819) 694-7564',
-                                        website: 'https://mdjescalejeunesse.ca',
-                                        transportRequired: false
-                                    }
-                                }))}
-                                className="text-[10px] bg-mdj-cyan/10 hover:bg-mdj-cyan/20 px-2 py-1 rounded text-mdj-cyan border border-mdj-cyan/30 transition-colors flex items-center gap-1 mb-1"
-                                title="Remplir avec les infos de l'Aréna"
-                            >
-                                <MapPin className="w-3 h-3"/> MDJ / Aréna
-                            </button>
-                        </div>
-                        <input 
-                            className={inputClass}
-                            value={activity.logistics.venueName} 
-                            onChange={e => setActivity({...activity, logistics: {...activity.logistics, venueName: e.target.value}})} 
-                            placeholder="Ex: Musée POP, Maïkan Aventure..."
-                        />
-                        <div>
-                          <label className={labelClass}>Adresse complète</label>
-                          <input className={inputClass} value={activity.logistics.address} onChange={e => setActivity({...activity, logistics: {...activity.logistics, address: e.target.value}})} />
-                        </div>
-                        <div>
-                          <label className={labelClass}>Coordonnées</label>
-                          <div className="space-y-2">
-                             <div className="flex gap-2 items-center">
-                               <Phone className="w-4 h-4 text-gray-500" />
-                               <input 
-                                 className={inputClass} 
-                                 placeholder="Téléphone"
-                                 value={activity.logistics.phoneNumber || ''} 
-                                 onChange={e => setActivity({...activity, logistics: {...activity.logistics, phoneNumber: e.target.value}})} 
-                               />
-                             </div>
-                             <div className="flex gap-2 items-center">
-                               <LinkIcon className="w-4 h-4 text-gray-500" />
-                               <input 
-                                 className={inputClass} 
-                                 placeholder="Site Web"
-                                 value={activity.logistics.website || ''} 
-                                 onChange={e => setActivity({...activity, logistics: {...activity.logistics, website: e.target.value}})} 
-                               />
-                             </div>
-                          </div>
-                        </div>
-                        <div>
-                          <label className={labelClass}>Point de rassemblement</label>
-                          <input className={inputClass} value={activity.logistics.meetingPoint} onChange={e => setActivity({...activity, logistics: {...activity.logistics, meetingPoint: e.target.value}})} />
-                        </div>
-                      </div>
-                   </div>
-                   <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm">
-                      <div className="flex justify-between items-center mb-4">
-                        <h3 className="font-bold text-white flex items-center gap-2"><Truck className="w-5 h-5 text-mdj-cyan"/> Transport</h3>
-                        <label className="flex items-center gap-2 cursor-pointer bg-white/5 px-3 py-1 rounded-full border border-white/10 hover:bg-white/10 transition-all">
-                          <input type="checkbox" className="rounded text-mdj-cyan bg-transparent border-gray-500 focus:ring-mdj-cyan" checked={activity.logistics.transportRequired} onChange={e => setActivity({...activity, logistics: {...activity.logistics, transportRequired: e.target.checked}})} />
-                          <span className="text-sm font-medium text-white">Requis</span>
-                        </label>
-                      </div>
-                      {activity.logistics.transportRequired ? (
-                        <div className="space-y-4 animate-in fade-in slide-in-from-top-2">
-                           <div className="bg-mdj-cyan/5 p-4 rounded-xl border border-mdj-cyan/20">
-                              <h4 className="flex items-center gap-2 text-sm font-bold text-mdj-cyan mb-3"><Timer className="w-4 h-4"/> Horaire du transport</h4>
-                              <div className="grid grid-cols-2 gap-4">
-                                 <div>
-                                  <label className="text-[10px] font-bold text-mdj-cyan/70 uppercase">Départ (Aller)</label>
-                                  <input 
-                                    type="time" 
-                                    className="w-full mt-1 p-2 border border-mdj-cyan/30 rounded bg-mdj-black text-white focus:ring-mdj-cyan focus:border-mdj-cyan" 
-                                    value={activity.logistics.departureTime || ''} 
-                                    onChange={e => setActivity({...activity, logistics: {...activity.logistics, departureTime: e.target.value}})} 
-                                  />
-                                </div>
-                                <div>
-                                  <label className="text-[10px] font-bold text-mdj-cyan/70 uppercase">Retour (Arrivée)</label>
-                                  <input 
-                                    type="time" 
-                                    className="w-full mt-1 p-2 border border-mdj-cyan/30 rounded bg-mdj-black text-white focus:ring-mdj-cyan focus:border-mdj-cyan" 
-                                    value={activity.logistics.returnTime || ''} 
-                                    onChange={e => setActivity({...activity, logistics: {...activity.logistics, returnTime: e.target.value}})} 
-                                  />
-                                </div>
-                              </div>
-                           </div>
-                           <hr className="border-white/5"/>
-                           <div>
-                            <label className={labelClass}>Mode de transport</label>
-                            <select className={inputClass} value={activity.logistics.transportMode} onChange={e => setActivity({...activity, logistics: {...activity.logistics, transportMode: e.target.value}})}>
-                              <option value="">Sélectionner...</option>
-                              <option>Véhicules des intervenants</option>
-                              <option>Autobus</option>
-                              <option>À pied</option>
-                            </select>
-                          </div>
-                          <div className="grid grid-cols-2 gap-4">
-                             <div>
-                              <label className={labelClass}>Distance (km)</label>
-                              <input className={inputClass} value={activity.logistics.distance} onChange={e => setActivity({...activity, logistics: {...activity.logistics, distance: e.target.value}})} />
-                            </div>
-                            <div>
-                              <label className={labelClass}>Durée trajet</label>
-                              <input className={inputClass} value={activity.logistics.travelTime} onChange={e => setActivity({...activity, logistics: {...activity.logistics, travelTime: e.target.value}})} />
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="text-gray-500 italic text-center py-4 text-sm bg-white/5 rounded-xl border border-white/5">Aucun transport nécessaire.</div>
-                      )}
-                   </div>
-                 </div>
-                 <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm">
-                    <label className="block text-sm font-semibold text-gray-300 mb-2">Plan B (Météo ou imprévu)</label>
-                    <textarea 
-                      className="w-full p-3 border border-white/10 bg-mdj-black rounded-xl focus:ring-1 focus:ring-mdj-cyan text-white min-h-[80px]"
-                      value={activity.backupPlan}
-                      onChange={e => setActivity({...activity, backupPlan: e.target.value})}
-                      placeholder="Solution de repli..."
-                    />
-                  </div>
-              </div>
+              <LogisticsTab
+                activity={activity}
+                updateLogistics={updateLogistics}
+                updateActivity={updateActivity}
+                readiness={readiness}
+              />
             )}
 
+            {/* MATERIALS */}
             {activeTab === 'materials' && (
-              <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm max-w-4xl mx-auto animate-in fade-in duration-300">
-                <div className="mb-4">
-                    <label className={labelClass}>Suggestions de matériel</label>
-                    <QuickSuggestions 
-                        list={getCombinedList('materials', SUGGESTIONS.materials)}
-                        onSelect={(val) => setActivity({...activity, materials: [...activity.materials, { item: val, quantity: '1', supplier: 'MDJ', acquired: false }]})}
-                        colorClass="bg-white/10 text-gray-300 border-white/20 hover:bg-white/20"
-                    />
-                </div>
-                <table className="w-full">
-                  <thead>
-                    <tr className="text-left text-xs font-bold text-gray-500 uppercase border-b border-white/10 tracking-wider">
-                      <th className="pb-3 w-10">État</th>
-                      <th className="pb-3">Matériel</th>
-                      <th className="pb-3 w-24">Quantité</th>
-                      <th className="pb-3">Provenance (Responsable)</th>
-                      <th className="pb-3 w-10"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/5">
-                    {activity.materials.map((mat, idx) => (
-                      <tr key={idx} className="group hover:bg-white/5 transition-colors">
-                        <td className="py-3">
-                          <input 
-                            type="checkbox" 
-                            checked={mat.acquired} 
-                            onChange={(e) => {
-                              const newMat = [...activity.materials];
-                              newMat[idx].acquired = e.target.checked;
-                              setActivity({...activity, materials: newMat});
-                            }}
-                            className="rounded text-green-500 focus:ring-green-500 w-5 h-5 cursor-pointer border-gray-500 bg-transparent" 
-                          />
-                        </td>
-                        <td className="py-3"><input className="w-full bg-transparent border-none focus:ring-0 p-1 text-white placeholder-gray-600" value={mat.item} onChange={(e) => {
-                            const newMat = [...activity.materials];
-                            newMat[idx].item = e.target.value;
-                            setActivity({...activity, materials: newMat});
-                        }} placeholder="Nom de l'item..." /></td>
-                        <td className="py-3"><input className="w-full bg-transparent border-none focus:ring-0 p-1 text-white placeholder-gray-600" value={mat.quantity} onChange={(e) => {
-                            const newMat = [...activity.materials];
-                            newMat[idx].quantity = e.target.value;
-                            setActivity({...activity, materials: newMat});
-                        }} placeholder="Qte" /></td>
-                        <td className="py-3"><input className="w-full bg-transparent border-none focus:ring-0 p-1 text-white placeholder-gray-600" value={mat.supplier} onChange={(e) => {
-                            const newMat = [...activity.materials];
-                            newMat[idx].supplier = e.target.value;
-                            setActivity({...activity, materials: newMat});
-                        }} placeholder="Maison, Achat, Emprunt..." /></td>
-                        <td className="py-3 text-right">
-                           <button onClick={() => {
-                              const newMat = activity.materials.filter((_, i) => i !== idx);
-                              setActivity({...activity, materials: newMat});
-                           }} className="text-gray-500 hover:text-red-500 transition-colors"><X className="w-4 h-4"/></button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <button 
-                  onClick={() => setActivity({...activity, materials: [...activity.materials, { item: '', quantity: '', supplier: '', acquired: false }]})}
-                  className="mt-6 text-sm bg-white/5 text-gray-300 px-4 py-2 rounded-xl hover:bg-white/10 font-bold flex items-center gap-2 transition-colors border border-white/10"
-                >
-                  <Wand2 className="w-3 h-3" /> Ajouter un article manuellement
-                </button>
-              </div>
+              <MaterialsTab
+                activity={activity}
+                updateActivity={updateActivity}
+                userEmail={userEmail}
+              />
             )}
 
+            {/* INSCRIPTIONS */}
+            {activeTab === 'inscriptions' && (
+              <RegistrationsTab activityId={activity.id} />
+            )}
+
+            {/* RISK */}
             {activeTab === 'risk' && (
-               <div className="space-y-6 max-w-4xl mx-auto animate-in fade-in duration-300">
-                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm">
-                       <h3 className="flex items-center gap-2 font-bold text-white mb-4">
-                           <Gavel className="w-5 h-5 text-mdj-magenta"/> Règlements du Site
-                       </h3>
-                       <QuickSuggestions 
-                          list={getCombinedList('siteRules', SUGGESTIONS.siteRules)}
-                          onSelect={(val) => setActivity({...activity, riskManagement: {...activity.riskManagement, siteRules: [...(activity.riskManagement.siteRules || []), val]}})}
-                          colorClass="bg-mdj-magenta/10 text-mdj-magenta border-mdj-magenta/20"
-                       />
-                       <div className="space-y-2">
-                           {(activity.riskManagement.siteRules || []).map((rule, idx) => (
-                               <div key={idx} className="flex gap-2 items-start text-sm text-gray-300">
-                                   <span className="text-mdj-magenta">•</span>
-                                   <input 
-                                     className="flex-1 bg-transparent border-b border-transparent focus:border-white/30 p-0"
-                                     value={rule}
-                                     onChange={e => {
-                                        const newRules = [...(activity.riskManagement.siteRules || [])];
-                                        newRules[idx] = e.target.value;
-                                        setActivity({...activity, riskManagement: {...activity.riskManagement, siteRules: newRules}});
-                                     }}
-                                   />
-                                    <button className="text-gray-500 hover:text-red-500" onClick={() => {
-                                      const newRules = (activity.riskManagement.siteRules || []).filter((_, i) => i !== idx);
-                                      setActivity({...activity, riskManagement: {...activity.riskManagement, siteRules: newRules}});
-                                    }}><X className="w-3 h-3"/></button>
-                               </div>
-                           ))}
-                           <button 
-                             onClick={() => setActivity({...activity, riskManagement: {...activity.riskManagement, siteRules: [...(activity.riskManagement.siteRules || []), ""]}})}
-                             className="text-xs text-mdj-magenta font-bold hover:underline"
-                           >+ Ajouter un règlement manuellement</button>
-                       </div>
-                    </div>
-                    <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm">
-                       <h3 className="flex items-center gap-2 font-bold text-white mb-4">
-                           <FileText className="w-5 h-5 text-mdj-cyan"/> Obligations Administratives
-                       </h3>
-                       <QuickSuggestions 
-                          list={getCombinedList('compliance', SUGGESTIONS.compliance)}
-                          onSelect={(val) => setActivity({...activity, riskManagement: {...activity.riskManagement, complianceRequirements: [...(activity.riskManagement.complianceRequirements || []), val]}})}
-                          colorClass="bg-mdj-cyan/10 text-mdj-cyan border-mdj-cyan/20"
-                       />
-                       <div className="space-y-2">
-                           {(activity.riskManagement.complianceRequirements || []).map((req, idx) => (
-                               <div key={idx} className="flex gap-2 items-start text-sm text-gray-300">
-                                   <span className="text-mdj-cyan">→</span>
-                                   <input 
-                                     className="flex-1 bg-transparent border-b border-transparent focus:border-white/30 p-0"
-                                     value={req}
-                                     onChange={e => {
-                                        const newReqs = [...(activity.riskManagement.complianceRequirements || [])];
-                                        newReqs[idx] = e.target.value;
-                                        setActivity({...activity, riskManagement: {...activity.riskManagement, complianceRequirements: newReqs}});
-                                     }}
-                                   />
-                                   <button className="text-gray-500 hover:text-red-500" onClick={() => {
-                                      const newReqs = (activity.riskManagement.complianceRequirements || []).filter((_, i) => i !== idx);
-                                      setActivity({...activity, riskManagement: {...activity.riskManagement, complianceRequirements: newReqs}});
-                                    }}><X className="w-3 h-3"/></button>
-                               </div>
-                           ))}
-                           <button 
-                             onClick={() => setActivity({...activity, riskManagement: {...activity.riskManagement, complianceRequirements: [...(activity.riskManagement.complianceRequirements || []), ""]}})}
-                             className="text-xs text-mdj-cyan font-bold hover:underline"
-                           >+ Ajouter manuellement</button>
-                       </div>
-                    </div>
-                 </div>
-                 <div className="bg-mdj-orange/10 p-6 rounded-2xl border border-mdj-orange/20 shadow-sm">
-                   <h3 className="flex items-center gap-2 font-bold text-mdj-orange mb-4"><ShieldAlert className="w-5 h-5"/> Analyse de Risques</h3>
-                   <QuickSuggestions 
-                        list={getCombinedList('hazards', SUGGESTIONS.hazards)}
-                        onSelect={(val) => setActivity({...activity, riskManagement: {...activity.riskManagement, hazards: [...activity.riskManagement.hazards, val]}})}
-                        colorClass="bg-mdj-orange/20 text-mdj-orange border-mdj-orange/40 hover:bg-mdj-orange hover:text-white"
-                   />
-                   <div className="space-y-2 mt-4">
-                     {activity.riskManagement.hazards.map((hazard, idx) => (
-                       <div key={idx} className="flex gap-2 items-center">
-                          <ShieldAlert className="w-4 h-4 text-mdj-orange shrink-0"/>
-                          <input
-                            className="flex-1 bg-transparent border-b border-mdj-orange/30 focus:border-mdj-orange focus:ring-0 p-1 text-sm text-gray-300 focus:text-white transition-colors"
-                            value={hazard}
-                            onChange={(e) => {
-                                const newHazards = [...activity.riskManagement.hazards];
-                                newHazards[idx] = e.target.value;
-                                setActivity({...activity, riskManagement: {...activity.riskManagement, hazards: newHazards}});
-                            }}
-                          />
-                          <button onClick={() => {
-                             const newHazards = activity.riskManagement.hazards.filter((_, i) => i !== idx);
-                             setActivity({...activity, riskManagement: {...activity.riskManagement, hazards: newHazards}});
-                          }} className="text-gray-500 hover:text-red-500"><X className="w-4 h-4"/></button>
-                       </div>
-                     ))}
-                     <button 
-                      onClick={() => setActivity({...activity, riskManagement: {...activity.riskManagement, hazards: [...activity.riskManagement.hazards, ""]}})}
-                      className="text-xs text-mdj-orange font-bold hover:underline mt-2">
-                       + Ajouter manuellement
-                     </button>
-                   </div>
-                 </div>
-                 <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm">
-                      <label className="block text-sm font-bold text-white mb-4">Protocoles de sécurité & Code de vie</label>
-                      <QuickSuggestions 
-                            list={getCombinedList('protocols', SUGGESTIONS.protocols)}
-                            onSelect={(val) => setActivity({...activity, riskManagement: {...activity.riskManagement, safetyProtocols: [...activity.riskManagement.safetyProtocols, val]}})}
-                            colorClass="bg-green-500/10 text-green-400 border-green-500/30 hover:bg-green-500/20"
-                      />
-                      <div className="space-y-3">
-                        {activity.riskManagement.safetyProtocols.map((proto, idx) => (
-                          <div key={idx} className="flex gap-3 items-start group">
-                            <CheckSquare className="w-5 h-5 text-green-400 shrink-0 mt-0.5"/>
-                            <input 
-                              className="flex-1 border-b border-transparent focus:border-white/30 focus:ring-0 p-0 text-gray-300 bg-transparent" 
-                              value={proto}
-                              onChange={e => {
-                                const newProtos = [...activity.riskManagement.safetyProtocols];
-                                newProtos[idx] = e.target.value;
-                                setActivity({...activity, riskManagement: {...activity.riskManagement, safetyProtocols: newProtos}});
-                              }}
-                            />
-                            <button onClick={() => {
-                               const newProtos = activity.riskManagement.safetyProtocols.filter((_, i) => i !== idx);
-                               setActivity({...activity, riskManagement: {...activity.riskManagement, safetyProtocols: newProtos}});
-                            }} className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-500"><X className="w-4 h-4"/></button>
-                          </div>
-                        ))}
-                        <button 
-                          onClick={() => setActivity({...activity, riskManagement: {...activity.riskManagement, safetyProtocols: [...activity.riskManagement.safetyProtocols, ""]}})}
-                          className="text-sm text-mdj-cyan pl-8 hover:underline font-bold"
-                        >+ Ajouter manuellement</button>
-                      </div>
-                   </div>
-                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                   <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm">
-                      <label className={labelClass}>Assurances & Autorisations</label>
-                      <textarea 
-                        className="w-full p-3 border border-white/10 bg-mdj-black rounded-lg text-sm text-white placeholder-gray-600"
-                        value={activity.riskManagement.requiredInsurance}
-                        onChange={e => setActivity({...activity, riskManagement: {...activity.riskManagement, requiredInsurance: e.target.value}})}
-                        placeholder="Formulaires de consentement, Assurances spéciales..."
-                        rows={3}
-                      />
-                   </div>
-                   <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm">
-                      <label className={labelClass}>Contact d'urgence</label>
-                      <input 
-                        className={inputClass}
-                        value={activity.riskManagement.emergencyContact}
-                        onChange={e => setActivity({...activity, riskManagement: {...activity.riskManagement, emergencyContact: e.target.value}})}
-                        placeholder="Patrick Delage (DG)"
-                      />
-                   </div>
-                 </div>
-               </div>
+              <RiskTab
+                activity={activity}
+                updateRiskManagement={updateRiskManagement}
+                updateActivity={updateActivity}
+              />
             )}
 
+            {/* BUDGET */}
             {activeTab === 'budget' && (
-              <div className="space-y-6 max-w-4xl mx-auto animate-in fade-in duration-300">
-                <div className="grid grid-cols-2 gap-6">
-                  <div className="bg-mdj-black/30 p-6 rounded-2xl text-center border border-white/10 shadow-sm">
-                    <span className="block text-xs font-bold text-gray-500 uppercase mb-1">Coût Estimé</span>
-                    <span className="text-4xl font-bold text-mdj-cyan font-mono">{activity.budget.estimatedCost.toFixed(2)}$</span>
-                  </div>
-                   <div className="bg-mdj-black/30 p-6 rounded-2xl text-center border border-white/10 shadow-sm">
-                    <span className="block text-xs font-bold text-gray-500 uppercase mb-1">Coût Réel</span>
-                    <span className={`text-4xl font-bold font-mono ${activity.budget.actualCost > activity.budget.estimatedCost ? 'text-red-500' : 'text-green-400'}`}>
-                      {activity.budget.actualCost.toFixed(2)}$
-                    </span>
-                  </div>
-                </div>
-                <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm">
-                  <h3 className="font-bold text-white mb-4 flex items-center gap-2"><DollarSign className="w-5 h-5 text-mdj-yellow"/> Postes budgétaires</h3>
-                  <QuickSuggestions 
-                     list={getCombinedList('budget', SUGGESTIONS.budget)} 
-                     onSelect={(val) => {
-                         const newItems = [...activity.budget.items, { description: val, amount: 0 }];
-                         setActivity({...activity, budget: {...activity.budget, items: newItems}});
-                     }}
-                     colorClass="bg-mdj-yellow/10 text-mdj-yellow border-mdj-yellow/30"
-                  />
-                  <div className="space-y-2">
-                    {activity.budget.items.map((item, idx) => (
-                       <div key={idx} className="flex justify-between items-center py-3 px-4 bg-white/5 rounded-xl border border-white/5 group hover:bg-white/10 transition-colors">
-                         <input 
-                           className="flex-1 border-none focus:ring-0 p-0 text-white bg-transparent font-medium" 
-                           value={item.description}
-                           onChange={e => {
-                             const newItems = [...activity.budget.items];
-                             newItems[idx].description = e.target.value;
-                             setActivity({...activity, budget: {...activity.budget, items: newItems}});
-                           }}
-                         />
-                         <div className="flex items-center gap-3">
-                           <div className="relative">
-                             <input 
-                               type="number"
-                               className="w-24 text-right border-none focus:ring-0 p-0 font-mono text-mdj-cyan bg-transparent font-bold" 
-                               value={item.amount}
-                               onChange={e => {
-                                 const newItems = [...activity.budget.items];
-                                 newItems[idx].amount = parseFloat(e.target.value) || 0;
-                                 const newTotal = newItems.reduce((acc, curr) => acc + curr.amount, 0);
-                                 setActivity({...activity, budget: {...activity.budget, estimatedCost: newTotal, items: newItems}});
-                               }}
-                             />
-                             <span className="absolute right-[-15px] top-0 text-gray-500">$</span>
-                           </div>
-                           <button onClick={() => {
-                              const newItems = activity.budget.items.filter((_, i) => i !== idx);
-                              const newTotal = newItems.reduce((acc, curr) => acc + curr.amount, 0);
-                              setActivity({...activity, budget: {...activity.budget, estimatedCost: newTotal, items: newItems}});
-                           }} className="text-gray-500 hover:text-red-500 opacity-0 group-hover:opacity-100"><X className="w-4 h-4"/></button>
-                         </div>
-                       </div>
-                    ))}
-                  </div>
-                  <button 
-                    onClick={() => setActivity({...activity, budget: {...activity.budget, items: [...activity.budget.items, { description: 'Nouvel item', amount: 0 }]}})}
-                    className="mt-4 text-sm text-mdj-yellow font-bold hover:underline pl-1"
-                  >+ Ajouter un poste manuellement</button>
-                </div>
+              <BudgetTab
+                activity={activity}
+                updateBudget={updateBudget}
+                userEmail={userEmail}
+              />
+            )}
+
+
+            {/* JDB & PSOC */}
+            {activeTab === 'jdb' && (
+              <JournalDeBordTab
+                activity={activity}
+                updateActivity={updateActivity}
+                userEmail={userEmail ?? null}
+              />
+            )}
+
+            {/* JOURNAL DES MODIFICATIONS */}
+            {activeTab === 'journal' && (
+              <JournalTab activity={activity} />
+            )}
+
+            {/* STAFF */}
+            {activeTab === 'staff' && (
+              <StaffTab
+                activity={activity}
+                updateStaffing={updateStaffing}
+                availableLeadStaff={availableLeadStaff}
+                availableSupportStaff={availableSupportStaff}
+                checkStaffConflict={checkStaffConflict}
+                getConflictingActivities={getConflictingActivities}
+                allActivities={allActivities ?? []}
+                showTransfer={showTransfer}
+                setShowTransfer={setShowTransfer}
+                handleTransferResponsibility={handleTransferResponsibility}
+                isTransferring={isTransferring}
+              />
+            )}
+
+            {/* DOCUMENTS */}
+            {activeTab === 'documents' && (
+              <DocumentsTab
+                activity={activity}
+                handleFileUpload={handleFileUpload}
+                handleDeleteFile={handleDeleteFile}
+                formatFileSize={formatFileSize}
+              />
+            )}
+
+            {/* CONTROL / POST-MORTEM */}
+            {activeTab === 'control' && (
+              <ControlTab
+                activity={activity}
+                reservations={activityReservations}
+                inventoryItems={inventoryItems}
+                onUpdateStats={updateStats}
+                onValidateConsumption={validateConsumption}
+                onReportDamage={updateItemCondition}
+                onSetActivityValidated={setConsumptionValidated}
+              />
+            )}
+          </div>
+        </div >
+        <div className="p-4 border-t border-slate-200 dark:border-white/10 flex flex-col sm:flex-row justify-between items-center bg-white dark:bg-mdj-dark gap-4 sm:gap-0 transition-all">
+          <div className="flex flex-col gap-1 items-start">
+            <div className="text-xs text-slate-400 dark:text-gray-500 font-medium">MDJ L'Escale Jeunesse - La Piaule</div>
+            {readiness.checks.some((c: any) => c.isCritical && !c.met) && (
+              <div className="flex items-center gap-2 text-[10px] text-red-500 font-bold uppercase tracking-widest animate-pulse">
+                <AlertCircle className="w-3 h-3" /> éléments obligatoires manquants
               </div>
             )}
-
-            {activeTab === 'staff' && (
-               <div className="space-y-6 max-w-4xl mx-auto animate-in fade-in duration-300">
-                 <div className="bg-mdj-black/30 p-6 rounded-2xl border border-white/10 shadow-sm">
-                   <h3 className="font-bold text-white mb-6">Équipe d'animation & Encadrement</h3>
-                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                      <div>
-                        <label className={labelClass}>Adulte Significatif (Lead)</label>
-                        <input 
-                          list="staffList"
-                          className="w-full p-3 border border-mdj-cyan/30 rounded-xl font-bold text-mdj-cyan bg-mdj-cyan/10 focus:ring-mdj-cyan focus:border-mdj-cyan" 
-                          value={activity.staffing.leadStaff} 
-                          onChange={e => setActivity({...activity, staffing: {...activity.staffing, leadStaff: e.target.value}})} 
-                        />
-                        <datalist id="staffList">
-                          {STAFF_LIST.map(staff => <option key={staff} value={staff} />)}
-                        </datalist>
-                      </div>
-                      <div>
-                        <label className={labelClass}>Ratio requis</label>
-                        <input className={inputClass} value={activity.staffing.requiredRatio} onChange={e => setActivity({...activity, staffing: {...activity.staffing, requiredRatio: e.target.value}})} />
-                      </div>
-                   </div>
-                   <div className="mt-8">
-                      <label className={labelClass}>Personnel de soutien</label>
-                      <QuickSuggestions 
-                            list={getCombinedList('supportStaff', DEFAULT_SUPPORT_STAFF)}
-                            onSelect={(val) => setActivity({...activity, staffing: {...activity.staffing, supportStaff: [...activity.staffing.supportStaff, val]}})}
-                            colorClass="bg-white/5 border-white/10 hover:bg-white/10"
-                      />
-                      <div className="space-y-2 mt-4">
-                         {activity.staffing.supportStaff.map((staff, idx) => (
-                           <div key={idx} className="flex gap-2 items-center">
-                              <Users className="w-4 h-4 text-gray-500 shrink-0"/>
-                              <input
-                                className="flex-1 bg-transparent border-b border-white/10 focus:border-white focus:ring-0 p-1 text-sm text-gray-300 focus:text-white transition-colors"
-                                value={staff}
-                                onChange={(e) => {
-                                    const newStaff = [...activity.staffing.supportStaff];
-                                    newStaff[idx] = e.target.value;
-                                    setActivity({...activity, staffing: {...activity.staffing, supportStaff: newStaff}});
-                                }}
-                              />
-                              <button onClick={() => {
-                                const newStaff = activity.staffing.supportStaff.filter((_, i) => i !== idx);
-                                setActivity({...activity, staffing: {...activity.staffing, supportStaff: newStaff}});
-                              }} className="text-gray-500 hover:text-red-500"><X className="w-4 h-4"/></button>
-                           </div>
-                         ))}
-                         <button 
-                            onClick={() => setActivity({...activity, staffing: {...activity.staffing, supportStaff: [...activity.staffing.supportStaff, ""]}})}
-                            className="text-xs text-mdj-cyan font-bold hover:underline mt-2"
-                         >+ Ajouter manuellement</button>
-                      </div>
-                   </div>
-                   <div className="mt-8 p-4 bg-mdj-yellow/5 rounded-xl border border-mdj-yellow/20">
-                      <label className="text-xs font-bold text-mdj-yellow uppercase mb-2 block">Qualifications requises</label>
-                      <QuickSuggestions 
-                            list={getCombinedList('qualifications', SUGGESTIONS.qualifications)}
-                            onSelect={(val) => setActivity({...activity, staffing: {...activity.staffing, specialQualifications: (activity.staffing.specialQualifications ? activity.staffing.specialQualifications + ", " : "") + val}})}
-                            colorClass="bg-mdj-yellow/10 border-mdj-yellow/20 hover:bg-mdj-yellow/20 text-mdj-yellow"
-                      />
-                      <input 
-                        className="w-full bg-transparent border-b border-mdj-yellow/30 p-2 text-sm text-white focus:ring-0 placeholder-gray-500 mt-2" 
-                        value={activity.staffing.specialQualifications || ""}
-                        onChange={e => setActivity({...activity, staffing: {...activity.staffing, specialQualifications: e.target.value}})}
-                        placeholder="Ex: RCR, Permis de conduire classe 4B..."
-                      />
-                   </div>
-                 </div>
-               </div>
+          </div>
+          <div className="flex gap-2 sm:gap-3 w-full sm:w-auto justify-center">
+            {onDelete && (
+              <button
+                onClick={() => setShowDeleteConfirm(true)}
+                className="flex items-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-red-500/10 border border-red-500/30 hover:bg-red-500/20 hover:border-red-500/50 text-red-400 hover:text-red-300 font-bold transition-all text-xs sm:text-sm"
+                title="Supprimer cette activité"
+              >
+                <Trash2 className="w-4 h-4" /> <span className="inline">Supprimer</span>
+              </button>
             )}
-          </div>
-        </div>
-        <div className="p-4 border-t border-white/10 flex justify-between items-center bg-mdj-dark">
-          <div className="text-xs text-gray-500 pl-2">
-            MDJ L'Escale Jeunesse - La Piaule
-          </div>
-          <div className="flex gap-3">
-             <button 
-              onClick={() => HtmlGeneratorService.downloadActivityDetail(activity)} 
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-mdj-black border border-white/10 hover:bg-white/10 hover:border-white/20 text-gray-300 font-bold transition-all mr-auto"
-              title="Générer une fiche terrain imprimable"
-            >
-              <Printer className="w-4 h-4" /> <span className="hidden sm:inline">Imprimer Fiche</span>
+            <button onClick={handlePrint} className="flex items-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-slate-50 dark:bg-mdj-black border border-slate-200 dark:border-white/10 hover:bg-slate-100 dark:hover:bg-white/10 hover:border-slate-300 dark:hover:border-white/20 text-slate-600 dark:text-gray-300 font-bold transition-all text-xs sm:text-sm shadow-sm" title="Générer une fiche terrain imprimable">
+              <Printer className="w-4 h-4" /> <span className="inline">Imprimer</span>
             </button>
-            <button onClick={onClose} className="px-6 py-2.5 rounded-xl text-gray-400 hover:bg-white/5 hover:text-white font-bold transition-all">Annuler</button>
-            <button 
+            {onClone && userEmail && userEmail.endsWith('@mdjescalejeunesse.ca') && (
+              <button
+                onClick={async () => {
+                  try {
+                    await onClone(activity);
+                    onClose();
+                  } catch (e) {
+                    console.error("Cloning failed:", e);
+                  }
+                }}
+                className="flex items-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl bg-slate-50 dark:bg-mdj-black border border-slate-200 dark:border-white/10 hover:bg-slate-100 dark:hover:bg-white/10 hover:border-slate-300 dark:hover:border-white/20 text-indigo-600 dark:text-indigo-400 font-bold transition-all text-xs sm:text-sm shadow-sm"
+                title="Dupliquer cette activité pour la semaine suivante"
+              >
+                <Copy className="w-4 h-4" /> <span className="inline">Cloner</span>
+              </button>
+            )}
+            <button onClick={onClose} className="px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl text-slate-500 dark:text-gray-400 hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white font-bold transition-all text-xs sm:text-sm">Annuler</button>
+            <button
               onClick={handleSaveInternal}
-              className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-mdj-cyan to-blue-600 text-black hover:to-blue-500 font-bold shadow-[0_0_20px_rgba(0,255,255,0.3)] hover:shadow-[0_0_30px_rgba(0,255,255,0.5)] transition-all"
+              className={cn(
+                "flex items-center gap-2 px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl font-bold transition-all text-xs sm:text-sm",
+                readiness.checks.some((c: any) => c.isCritical && !c.met)
+                  ? "bg-slate-200 dark:bg-white/5 text-slate-400 cursor-not-allowed border border-slate-300 dark:border-white/10"
+                  : "bg-gradient-to-r from-mdj-cyan to-blue-600 text-black hover:to-blue-500 shadow-[0_0_20px_rgba(0,255,255,0.3)] hover:shadow-[0_0_30px_rgba(0,255,255,0.5)]"
+              )}
             >
-              <Save className="w-4 h-4" /> Enregistrer le plan
+              <Save className="w-4 h-4" /> Enregistrer
             </button>
           </div>
         </div>
       </div>
+
+      {/* DELETE CONFIRMATION MODAL */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300">
+          <div className="bg-white dark:bg-slate-900 border border-red-500/30 rounded-3xl p-8 max-w-sm w-full shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-6">
+              <Trash2 className="w-8 h-8 text-red-500" />
+            </div>
+            <h3 className="text-xl font-bold text-slate-900 dark:text-white text-center mb-2">Confirmer la suppression</h3>
+            <p className="text-slate-500 dark:text-slate-400 text-center mb-8 text-sm">
+              Êtes-vous sûr de vouloir supprimer définitivement l'activité <span className="font-bold text-red-500">"{activity.title}"</span> ? Cette action est irréversible.
+            </p>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={() => {
+                  if (onDelete) onDelete(activity.id);
+                  setShowDeleteConfirm(false);
+                }}
+                className="w-full py-3 rounded-xl bg-red-500 hover:bg-red-600 text-white font-bold transition-all shadow-lg shadow-red-500/25 active:scale-95"
+              >
+                Oui, supprimer
+              </button>
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="w-full py-3 rounded-xl bg-slate-100 dark:bg-white/5 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-200 dark:hover:bg-white/10 transition-all active:scale-95"
+              >
+                Annuler
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
-};
+});
+
+ActivityModal.displayName = 'ActivityModal';
 
 export default ActivityModal;

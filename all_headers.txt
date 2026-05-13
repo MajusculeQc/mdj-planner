@@ -1,0 +1,69 @@
+﻿Membre - Prénom
+Membre - Nom
+Membre - Courriel
+
+Membre - Titre
+Membre - Téléphone
+Membre - Langue
+Membre - Adresse
+Membre - Code postal
+Membre - Ville
+Membre - Province
+Membre - Pays
+Membre - Photo
+Membre - Statut
+Membre - Latitude
+Membre - Longitude
+
+Membre - Notes
+Membre - Services
+Membre - Secteurs
+Membre - Clientèles
+
+Membre - Autorisation Photo
+Membre - École
+Membre - Allergies connues
+Membre - Catégorie d'âge du membre
+Membre - Médication
+Membre - Épipen
+Membre - Numéro d'Assurance Maladie
+Membre - Lien du parent ou tuteur légal (1)
+Membre - Nom et Prénom du parent ou tuteur légal (1)
+Membre - Adresse du parent ou tuteur légal (1)
+Membre - Téléphone du parent ou tuteur légal (1)
+Membre - Courriel du parent ou tuteur légal (1)
+Membre - Nom et Prénom du parent ou tuteur légal (2)
+Membre - Lien du parent ou tuteur légal (2)
+Membre - Courriel du parent ou tuteur légal (2)
+Membre - Adresse du parent ou tuteur légal (2)
+Membre - Téléphone du parent ou tuteur légal (2)
+Membre - Transport
+
+
+Membre - Courriel
+Adhésion - Type d'adhesion
+Adhésion - Statut d'adhésion
+
+
+
+Adhésion - Traitement de l'adhésion
+
+Référent - Numéro de contact
+Référent - N° de membre
+Référent - Titre
+Référent - Prénom
+Référent - Nom
+Référent - Courriel
+Référent - Téléphone
+Référent - Langue
+Référent - Adresse
+Référent - Code postal
+Référent - Ville
+Référent - Province
+Référent - Pays
+Référent - Photo
+Référent - Date
+Référent - Notes
+Référent - Statut
+Référent - Je souhaite m'abonner aux infolettres
+Id

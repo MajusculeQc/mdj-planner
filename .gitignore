@@ -22,3 +22,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Fichiers sensibles
+cle-export.json
+functions/src/backupCron.ts
+functions/lib/backupCron.js
+functions/lib/backupCron.js.map
+Documents/*firebase-adminsdk*.json

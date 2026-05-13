@@ -1,78 +1,49 @@
+import { z } from 'zod';
+import { ActivityZod, ActivityTypeEnum, MaterialZod, BudgetZod, LogisticsZod, RiskManagementZod, StaffingZod, YouthInvolvementZod, ActivityDocumentZod, CommentZod, ChangelogEntryZod, InventoryItemZod, MaterialReservationZod, PurchaseRequestZod, MemberZod, MemberStatusEnum, MemberGenderEnum, BoardMemberZod, VaultDocumentZod, BoardRoleEnum, FinancialHealthZod } from './lib/schemas';
 
-export enum ActivityType {
-  SAINES_HABITUDES = 'Saines habitudes de vie',
-  VIE_ASSOCIATIVE = 'Vie associative et démocratique',
-  PREVENTION = 'Prévention et sensibilisation',
-  CULTURELLE = 'Expression artistique et culturelle',
-  LOISIRS = 'Loisirs et divertissements'
-}
+export type ActivityType = z.infer<typeof ActivityTypeEnum>;
+export const ActivityType = {
+  ACCUEIL: 'Accueil, Écoute & Milieu de Vie',
+  AIDE_DEVOIRS: 'Aide aux Devoirs & Soutien Scolaire',
+  ACCOMPAGNEMENT: 'Accompagnement Individualisé',
+  INTERVENTION: 'Intervention & Gestion de Crise',
+  ANIMATION: 'Animation (sorties, activités, séjours)',
+  PREVENTION_INTERNE: 'Prévention & Sensibilisation (Interne)',
+  PREVENTION_PARTENAIRE: 'Prévention & Sensibilisation (Partenaire)',
+  VIE_ASSOCIATIVE: 'Vie Associative & Bénévolat Jeunes',
+  PROMOTION: 'Promotion, Concertation & Gestion',
+  PHYSIQUE: 'Activité physique',
+  CULINAIRE: 'Atelier culinaire',
+  DEMOCRATIQUE: 'Activité démocratique (CJ)'
+} as const;
 
-export interface Material {
-  item: string;
-  quantity: string;
-  supplier: string;
-  acquired: boolean;
-}
+export type ActivityTypes = (keyof typeof ActivityType)[];
 
-export interface Budget {
-  estimatedCost: number;
-  actualCost: number;
-  items: { description: string; amount: number }[];
-}
+export type Material = MaterialZod;
+export type Budget = BudgetZod;
+export type Logistics = LogisticsZod;
+export type RiskManagement = RiskManagementZod;
+export type Staffing = StaffingZod;
+export type YouthInvolvement = YouthInvolvementZod;
+export type ActivityDocument = ActivityDocumentZod;
+export type Activity = ActivityZod;
+export type Member = MemberZod;
+export type BoardMember = BoardMemberZod;
+export type VaultDocument = VaultDocumentZod;
+export type FinancialHealth = FinancialHealthZod;
 
-export interface Logistics {
-  venueName: string;
-  address: string;
-  phoneNumber?: string;
-  website?: string;
-  transportRequired: boolean;
-  transportMode?: string;
-  distance?: string;
-  travelTime?: string;
-  meetingPoint?: string;
-  departureTime?: string; // Heure du départ du transport
-  returnTime?: string;    // Heure du retour du transport
-}
+export type MemberStatus = z.infer<typeof MemberStatusEnum>;
+export type MemberGender = z.infer<typeof MemberGenderEnum>;
+export type BoardRole = z.infer<typeof BoardRoleEnum>;
 
-export interface RiskManagement {
-  hazards: string[];
-  requiredInsurance: string;
-  safetyProtocols: string[]; // Includes 'Code de vie' compliance
-  emergencyContact: string;
-  siteRules?: string[]; // New: Règlements spécifiques du site web
-  complianceRequirements?: string[]; // New: Formulaires, décharges, certifications
-}
+export type ActivityComment = CommentZod;
+export type ChangelogEntry = ChangelogEntryZod;
 
-export interface Staffing {
-  leadStaff: string; // Adultes significatifs
-  supportStaff: string[];
-  requiredRatio: string;
-  specialQualifications?: string;
-}
+export type InventoryItem = InventoryItemZod;
+export type MaterialReservation = MaterialReservationZod;
+export type PurchaseRequest = PurchaseRequestZod;
 
-export interface YouthInvolvement {
-  level: 'Consultation' | 'Organisation' | 'Animation' | 'Participation';
-  tasks: string[]; // Specific tasks delegated to youth
-}
-
-export interface Activity {
-  id: string;
-  title: string;
-  date: string; // YYYY-MM-DD
-  startTime: string;
-  endTime: string;
-  type: ActivityType;
+export interface BudgetItem {
   description: string;
-  objectives: string[]; // Linked to becoming Critical, Active, Responsible
-  rmjqDimensions: string[]; // ['Critique', 'Actif', 'Responsable']
-  logistics: Logistics;
-  materials: Material[];
-  budget: Budget;
-  staffing: Staffing;
-  riskManagement: RiskManagement;
-  youthInvolvement: YouthInvolvement;
-  communicationPlan: string;
-  preparationScore: number; // 0-100
-  backupPlan: string;
-  evaluationCriteria: string[]; // Post-activity reflection
+  amount: number;
 }

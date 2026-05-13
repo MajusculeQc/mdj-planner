@@ -1,21 +1,22 @@
-
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { Activity } from "../types";
+import { getErrorMessage } from "../lib/utils";
+import { AI_CONFIG } from "../config/aiConfig";
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
- * GEMINI AI SERVICE - UPDATED FOR @google/genai SDK
+ * GEMINI AI SERVICE - UPDATED FOR @google/generative-ai SDK
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
-const MDJ_ADDRESS = "5225 Rue de Courcelette, Trois-Rivières, QC G8Z 1K8";
+const MDJ_ADDRESS = "5225 Rue de Courcelette, Trois-Rivières, QC G8Y 4L4";
 
 const CONFIG = {
-  MODEL: 'gemini-3-flash-preview', 
-  TIMEOUT: 30000, 
+  MODEL: AI_CONFIG.model,
+  TIMEOUT: 30000,
   MAX_RETRIES: 3,
-  TEMPERATURE: 1.0, 
-  MAX_OUTPUT_TOKENS: 2048,
+  TEMPERATURE: AI_CONFIG.defaults.temperature,
+  MAX_OUTPUT_TOKENS: AI_CONFIG.defaults.maxOutputTokens,
 } as const;
 
 export interface GenerateOptions {
@@ -30,7 +31,7 @@ export interface GenerateOptions {
 // UTILITAIRES
 // ═══════════════════════════════════════════════════════════════════════════
 
-const parseAIResponse = (text: string | undefined): any | null => {
+const parseAIResponse = (text: string | undefined | null): unknown => {
   if (!text) return null;
   try {
     let cleanText = text.trim();
@@ -52,7 +53,8 @@ const parseAIResponse = (text: string | undefined): any | null => {
 };
 
 const getAPIKey = (): string | undefined => {
-  // Use process.env.API_KEY exclusively as per guidelines.
+  const key = import.meta.env.VITE_GEMINI_API_KEY ?? import.meta.env.VITE_API_KEY;
+  if (typeof key === 'string' && key.length > 0) return key;
   return process.env.API_KEY;
 };
 
@@ -66,42 +68,29 @@ export const GeminiService = {
    * Core generation function made public for ChatService usage.
    */
   generateWithRetry: async (options: GenerateOptions): Promise<string | null> => {
-    const apiKey = getAPIKey();
-    if (!apiKey) {
-      console.error("❌ API Key missing");
-      return "Erreur: Clé API manquante. Veuillez vérifier la configuration.";
-    }
-
-    // Always use the named parameter for API key initialization.
-    const ai = new GoogleGenAI({ apiKey });
+    // Always use the official SDK.
+    const genAI = new GoogleGenerativeAI(AI_CONFIG.apiKey);
 
     for (let attempt = 1; attempt <= CONFIG.MAX_RETRIES; attempt++) {
       try {
-        console.log(`🤖 AI Generation - Attempt ${attempt}`);
-        
-        const config: any = {
-          temperature: options.temperature ?? CONFIG.TEMPERATURE,
-          maxOutputTokens: options.maxTokens ?? CONFIG.MAX_OUTPUT_TOKENS,
-        };
-
-        if (options.jsonMode) {
-          config.responseMimeType = "application/json";
-        }
-
-        // Must use ai.models.generateContent to query GenAI with both the model name and prompt.
-        const response = await ai.models.generateContent({
+        const model = genAI.getGenerativeModel({
           model: CONFIG.MODEL,
-          contents: options.prompt,
-          config: config
-        });
+          generationConfig: {
+            temperature: options.temperature ?? CONFIG.TEMPERATURE,
+            maxOutputTokens: options.maxTokens ?? CONFIG.MAX_OUTPUT_TOKENS,
+            responseMimeType: options.jsonMode ? "application/json" : undefined,
+          }
+        }, { apiVersion: AI_CONFIG.apiVersion });
 
-        // The simplest and most direct way to get the generated text content is by accessing the .text property.
-        const text = response.text;
+        const result = await model.generateContent(options.prompt);
+        const response = await result.response;
+        const text = response.text();
+
         if (!text) throw new Error("Empty response");
         return text;
 
-      } catch (error: any) {
-        console.warn(`⚠️ Attempt ${attempt} failed:`, error.message || error);
+      } catch (error: unknown) {
+        console.warn(`[Gemini] Attempt ${attempt} failed:`, getErrorMessage(error));
         if (attempt < CONFIG.MAX_RETRIES) {
           await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
         } else {
@@ -111,14 +100,14 @@ export const GeminiService = {
     }
     return null;
   },
-  
+
   generatePedagogy: async (title: string, currentDesc: string) => {
     const prompt = `Tu es un expert en animation jeunesse.
     ACTIVITÉ: "${title}"
     DESCRIPTION: "${currentDesc}"
     
     Génère un JSON avec: description (40-60 mots, ton jeune), objectives (3 verbes d'action), youthTasks (3 tâches), evaluationCriteria (2 questions).`;
-    
+
     const text = await GeminiService.generateWithRetry({ prompt, jsonMode: true });
     return parseAIResponse(text);
   },
@@ -160,7 +149,7 @@ export const GeminiService = {
     return parseAIResponse(text);
   },
 
-  generateBudget: async (title: string, materials: any[]) => {
+  generateBudget: async (title: string, materials: Array<{ item: string }>) => {
     const matList = materials?.map(m => m.item).join(", ") || "Standard";
     const prompt = `Estime budget Trois-Rivières 2024 pour: "${title}". Matériel: ${matList}.
     JSON structure: { estimatedCost: number, items: [{ description, amount }] }`;
@@ -198,12 +187,12 @@ export const GeminiService = {
 
     Utilise des données réalistes. JSON strict.`;
 
-    const text = await GeminiService.generateWithRetry({ 
-      prompt, 
+    const text = await GeminiService.generateWithRetry({
+      prompt,
       jsonMode: true,
-      maxTokens: 4000 
+      maxTokens: 4000
     });
-    
+
     return parseAIResponse(text);
   },
 

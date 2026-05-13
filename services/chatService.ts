@@ -1,57 +1,38 @@
-import { collection, query, orderBy, onSnapshot, addDoc, serverTimestamp, getFirestore, Firestore } from "firebase/firestore";
-import { FirebaseService } from "./firebaseService";
+// import { getVertexAI, getGenerativeModel } from "firebase/vertexai";
+import { app } from "./firebaseService"; // On importe l'app déjà prête
 
-/**
- * Service de Chat Collaboratif
- * Implémente la logique temps réel décrite dans le guide.
- */
+// Initialisation du modèle IA
+// const vertexAI = getVertexAI(app);
+// const model = getGenerativeModel(vertexAI, { model: "gemini-1.5-flash" });
+
+export interface ChatMessage {
+  role: 'user' | 'model';
+  text: string;
+  timestamp: Date;
+}
+
 export const ChatService = {
-    
-    getDb: (): Firestore => {
-        const app = FirebaseService.initialize();
-        if (!app) throw new Error("Firebase non initialisé");
-        return getFirestore(app);
-    },
+  sendMessage: async (message: string, history: ChatMessage[]): Promise<string> => {
+    try {
+      // Conversion de l'historique pour Gemini
+      const chatHistory = history.map(msg => ({
+        role: msg.role,
+        parts: [{ text: msg.text }]
+      }));
 
-    /**
-     * Écoute les messages d'une session spécifique en temps réel.
-     */
-    subscribeToMessages: (sessionId: string, callback: (msgs: any[]) => void) => {
-        try {
-            const db = ChatService.getDb();
-            const messagesRef = collection(db, "sessions", sessionId, "messages");
-            
-            // Tri par date pour l'ordre chronologique
-            const q = query(messagesRef, orderBy("createdAt", "asc"));
+      /*
+      const chat = model.startChat({
+        history: chatHistory,
+      });
 
-            return onSnapshot(q, (snapshot) => {
-                const messages = snapshot.docs.map(doc => ({
-                    id: doc.id,
-                    ...doc.data()
-                }));
-                callback(messages);
-            }, (error) => {
-                console.error("Erreur Chat:", error);
-            });
-        } catch (e) {
-            console.error("Impossible de s'abonner au chat (Hors ligne ?)", e);
-            return () => {};
-        }
-    },
-
-    /**
-     * Envoie un message (Utilisateur ou IA) à la base de données partagée.
-     */
-    sendMessage: async (sessionId: string, text: string, role: 'user' | 'model', userName: string = 'Système') => {
-        const db = ChatService.getDb();
-        const messagesRef = collection(db, "sessions", sessionId, "messages");
-        
-        await addDoc(messagesRef, {
-            text: text,
-            role: role,
-            createdAt: serverTimestamp(),
-            user: userName,
-            timestamp: Date.now() // Fallback pour le tri si serverTimestamp est en attente
-        });
+      const result = await chat.sendMessage(message);
+      const response = await result.response;
+      return response.text();
+      */
+      return "Le service de chat est temporairement désactivé pour maintenance technique (Conflit SDK Firebase).";
+    } catch (error) {
+      console.error("Erreur Gemini:", error);
+      return "Désolé, je rencontre des difficultés techniques pour répondre.";
     }
+  }
 };

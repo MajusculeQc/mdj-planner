@@ -1,364 +1,653 @@
-import React, { useState, useEffect } from 'react';
-import { Activity, ActivityType } from './types';
-import ActivityModal from './components/ActivityModal';
-import ConfigModal from './components/ConfigModal';
-import ChatPanel from './components/ChatPanel';
-import { ActivityService } from './services/activityService';
-import { FirebaseService } from './services/firebaseService';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
+import { Activity, InventoryItem } from './types';
+const ActivityModal = lazy(() => import('./components/ActivityModal'));
+const ChatPanel = lazy(() => import('./components/communication/ChatPanel'));
+const SyncPreviewModal = lazy(() => import('./components/sync/SyncPreviewModal'));
+const EmployeeProfileModal = lazy(() => import('./components/EmployeeProfileModal').then(module => ({ default: module.EmployeeProfileModal })));
+const InternalMessenger = lazy(() => import('./components/communication/InternalMessenger'));
+const ReportsPanel = lazy(() => import('./components/dashboard/ReportsPanel').then(m => ({ default: m.ReportsPanel })));
+const MemberRegistryModal = lazy(() => import('./components/admin/MemberRegistryModal').then(m => ({ default: m.MemberRegistryModal })));
+const GovernanceModule = lazy(() => import('./components/admin/GovernanceModule').then(m => ({ default: m.GovernanceModule })));
+const FinancialHealthPanel = lazy(() => import('./components/reports/FinancialHealthPanel').then(m => ({ default: m.FinancialHealthPanel })));
+const PsocExportWizard = lazy(() => import('./components/reports/PsocExportWizard').then(m => ({ default: m.PsocExportWizard })));
+const WebRegistrationsPanel = lazy(() => import('./components/admin/WebRegistrationsPanel').then(m => ({ default: m.WebRegistrationsPanel })));
+const AboutModal = lazy(() => import('./components/AboutModal').then(m => ({ default: m.AboutModal })));
+
+// Dashboard Components
+import { DashboardSidebar } from './components/dashboard/DashboardSidebar';
+import { LeftRailNav } from './components/dashboard/LeftRailNav';
+import { MobileBottomNav } from './components/ui/MobileBottomNav';
+import { InventoryItemModal } from './components/dashboard/InventoryItemModal';
+import { MainHeader } from './components/dashboard/MainHeader';
+import { QuickStats } from './components/dashboard/QuickStats';
+import { RmjqPanel } from './components/dashboard/RmjqPanel';
+import { BudgetPanel } from './components/dashboard/BudgetPanel';
+import { PostponedPanel } from './components/dashboard/PostponedPanel';
+import { CalendarGrid } from './components/dashboard/CalendarGrid';
+import { CalendarLegend } from './components/dashboard/CalendarLegend';
 import { HtmlGeneratorService } from './services/htmlGeneratorService';
-import { ChevronLeft, ChevronRight, Plus, BellRing, Code, MessageSquare, User as UserIcon, Settings, LogIn, LogOut, Cloud, Calendar as CalendarIcon } from 'lucide-react';
+import { FirebaseService } from './services/firebaseService';
+import { useActivities } from './hooks/useActivities';
+import { InventoryService } from './services/inventoryService';
+import { useAuth } from './hooks/useAuth';
+import { useCalendar } from './hooks/useCalendar';
+import { usePlanningMetrics } from './hooks/usePlanningMetrics';
+import { usePurchases } from './hooks/usePurchases';
+import { useUserProfile } from './hooks/useUserProfile';
+import { calculateActivityReadiness } from './lib/readiness';
+import { cn, isAbsence } from './lib/utils';
+import { RMJQ_TARGETS, getUserRole, TEAM_DIRECTORY, getEmployeeName, MONTH_NAMES, EMPLOYEE_AVATARS } from './lib/constants';
+import { DashboardFilters } from './components/dashboard/DashboardFilters';
+import { AlertsPanel } from './components/dashboard/AlertsPanel';
+import { AbsencesPanel } from './components/dashboard/AbsencesPanel';
+import { InventoryPanel } from './components/dashboard/InventoryPanel';
+import { PurchasesPanel } from './components/dashboard/PurchasesPanel';
+import { useInventory } from './hooks/useInventory';
+import { PermissionGate } from './components/auth/PermissionGate';
+import { getSpecialDay } from './lib/calendarConstants';
+import { getEmployeeAvatar, getStatusColor, getBudgetIcon, getBudgetColor } from './lib/ui-utils';
+import { Container } from './components/ui/Container';
+import {
+  Settings,
+  Plus,
+  Target,
+  AlertCircle,
+  MessageSquare,
+  Sparkles,
+  LogOut,
+  ChevronLeft,
+  ChevronRight,
+  TrendingUp,
+  Loader2
+} from 'lucide-react';
 import { User } from 'firebase/auth';
 
-// --- DONNÉES PÉDAGOGIQUES ---
-const SCHOOL_CALENDAR_DATA: Record<string, { type: 'pedagogical' | 'holiday' | 'break', label: string }> = {
-  '2026-01-30': { type: 'pedagogical', label: 'Pédago' },
-  '2026-02-20': { type: 'pedagogical', label: 'Pédago' },
-  '2026-03-20': { type: 'pedagogical', label: 'Pédago' },
-  '2026-03-30': { type: 'holiday', label: 'Pâques' },
+// ═══════════════════════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Redundant constants and helpers removed in favor of constants.ts
+
+// Expose migration on window for admin console access
+(window as any).runMigration = async () => {
+  const result = await FirebaseService.migrateActivityTypes();
+  console.table(result.details);
+  alert(`Migration complète !\n${result.updated} types corrigés\n${result.skipped} déjà conformes`);
+  return result;
 };
 
-// --- FONCTION UTILITAIRE ---
-const createEmptyActivity = (date: string): Activity => ({
-  id: `act-${Date.now()}`,
-  title: 'Nouvelle activité',
-  date: date,
-  startTime: '17:30',
-  endTime: '21:00',
-  type: ActivityType.LOISIRS,
-  description: '',
-  objectives: [],
-  rmjqDimensions: [],
-  youthInvolvement: { level: 'Participation', tasks: [] },
-  evaluationCriteria: [],
-  logistics: {
-    venueName: 'MDJ (Aréna Jérôme-Cotnoir)',
-    address: '5225 Rue de Courcelette, Trois-Rivières, QC G8Y 4L4',
-    phoneNumber: '(819) 694-7564',
-    website: 'https://mdjescalejeunesse.ca',
-    transportRequired: false,
-    meetingPoint: 'Local 2'
-  },
-  materials: [],
-  budget: { estimatedCost: 0, actualCost: 0, items: [] },
-  staffing: { leadStaff: '', supportStaff: [], requiredRatio: '1/15' },
-  riskManagement: { hazards: [], requiredInsurance: '', safetyProtocols: [], emergencyContact: 'Patrick Delage' },
-  communicationPlan: '',
-  preparationScore: 0,
-  backupPlan: ''
-});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// APP COMPONENT
+// ═══════════════════════════════════════════════════════════════════════════
 
 const App = () => {
-  // --- ÉTATS ---
-  const [activities, setActivities] = useState<Activity[]>([]);
-  const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
-  const [currentDate, setCurrentDate] = useState(new Date(2026, 1, 1));
-  const [draggedActivityId, setDraggedActivityId] = useState<string | null>(null);
+  // --- Hooks ---
+  const auth = useAuth();
+  const { profile, updateProfile } = useUserProfile(auth.currentUser);
+  const activityStore = useActivities(auth.currentUser?.email ?? undefined);
+  const calendar = useCalendar();
+  const rmjqCategoryState = useState<string | null>(null);
+  const { requests: purchaseRequests } = usePurchases(auth.currentUser?.email ?? undefined, profile?.role);
+  const {
+    items: inventoryItems,
+    isLoading: isInventoryLoading,
+    saveItem: saveInventoryItem,
+    deleteItem: deleteInventoryItem
+  } = useInventory(auth.currentUser?.email || undefined, profile?.role);
+  const metrics = usePlanningMetrics(activityStore.filteredActivities, calendar.currentMonthStr, rmjqCategoryState, purchaseRequests, inventoryItems);
 
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [showConfig, setShowConfig] = useState(false);
+  const handleCreatePRFromAlert = async (item: InventoryItem, missingQty: number) => {
+    if (!auth.currentUser?.email) return;
+    try {
+      await InventoryService.autoCreatePurchaseRequest(
+        item,
+        missingQty,
+        'ALERTE_STOCK',
+        auth.currentUser.email
+      );
+      alert(`Demande d'achat créée pour ${missingQty} ${item.name}.`);
+    } catch (error) {
+      console.error("Error creating PR from alert:", error);
+      alert("Erreur lors de la création de la demande d'achat.");
+    }
+  };
+
   const [showChat, setShowChat] = useState(false);
-  
-  // État pour afficher le menu de connexion (choix entre Google et Microsoft)
-  const [showLoginMenu, setShowLoginMenu] = useState(false);
+  const [showSyncPreview, setShowSyncPreview] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showReports, setShowReports] = useState(false);
+  const [showMembers, setShowMembers] = useState(false);
+  const [showGovernance, setShowGovernance] = useState(false);
+  const [showFinancial, setShowFinancial] = useState(false);
+  const [showPsocWizard, setShowPsocWizard] = useState(false);
+  const [showWebRegistrations, setShowWebRegistrations] = useState(false);
+  const [showAboutModal, setShowAboutModal] = useState(false);
+  const [initialModalTab, setInitialModalTab] = useState<string | undefined>(undefined);
 
-  // --- EFFETS (INITIALISATION) ---
+  const [monthTheme, setMonthTheme] = useState('');
+  const [isEditingTheme, setIsEditingTheme] = useState(false);
+  const [dragOverDate, setDragOverDate] = useState<string | null>(null);
+  const [showMessenger, setShowMessenger] = useState(false);
+  const [messages, setMessages] = useState<any[]>([]);
+  const [activeSection, setActiveSection] = useState<'calendar' | 'members' | 'governance' | 'financial' | 'psoc' | 'web_registrations'>('calendar');
+
+  const handleSectionChange = (section: any) => {
+    // Reset all modal states first
+    setShowMembers(false);
+    setShowGovernance(false);
+    setShowFinancial(false);
+    setShowPsocWizard(false);
+    setShowWebRegistrations(false);
+    setShowReports(false);
+    setShowSyncPreview(false);
+
+    if (section === 'calendar' || section === 'web_registrations') {
+      setActiveSection(section);
+      if (section === 'web_registrations') setShowWebRegistrations(true);
+      return;
+    }
+
+    // These sections are currently modals
+    setActiveSection(section); // Allow sidebar to reflect the active modal
+    if (section === 'members') setShowMembers(true);
+    if (section === 'governance') setShowGovernance(true);
+    if (section === 'financial') setShowFinancial(true);
+    if (section === 'psoc') setShowPsocWizard(true);
+  };
+
   useEffect(() => {
-    let unsubscribeActivities: () => void = () => {};
+    const fetchTheme = async () => {
+      const theme = await FirebaseService.getTheme(calendar.currentMonthStr);
+      setMonthTheme(theme);
+    };
+    fetchTheme();
+  }, [calendar.currentMonthStr]);
 
-    const initApp = async () => {
-      // 1. Écouter l'état de connexion (Auth)
-      FirebaseService.subscribeToAuth((user) => {
-        setCurrentUser(user);
-        if (user) setShowLoginMenu(false); // Fermer le menu si connecté
-      });
+  useEffect(() => {
+    if (!auth.currentUser || !profile?.role || profile.role === 'viewer') return;
+    const unsub = FirebaseService.subscribeToMessages(setMessages);
+    return () => unsub();
+  }, [auth.currentUser, profile?.role]);
 
-      // 2. Écouter les activités en temps réel (Firestore)
-      unsubscribeActivities = FirebaseService.subscribeToActivities((cloudData) => {
-        setActivities(cloudData);
-      });
+  // --- Cleanup: remove duplicate March 19 "Soirée libre" activities ---
+  useEffect(() => {
+    if (!auth.currentUser || activityStore.activities.length === 0) return;
+    const march19Date = '2026-03-19';
+    const march19Acts = activityStore.activities
+      .filter(a => a.date === march19Date && (a.title === 'Soirée libre' || a.title === 'Libre'));
+    if (march19Acts.length > 1) {
+      // Keep only the first one, delete the rest
+      const key = `cleanup_done_${march19Date}`;
+      if (localStorage.getItem(key)) return;
 
-      // 3. Masquer l'écran de chargement HTML s'il existe
+      const toDelete = march19Acts.slice(1);
+      Promise.all(toDelete.map(act => FirebaseService.delete(act.id)))
+        .then(() => localStorage.setItem(key, 'true'))
+        .catch(err => console.error("Cleanup error:", err));
+    }
+  }, [auth.currentUser, activityStore.activities]);
+
+  // --- Inventory Modal State ---
+  const [showInventoryModal, setShowInventoryModal] = useState(false);
+  const [selectedInventoryItem, setSelectedInventoryItem] = useState<InventoryItem | undefined>(undefined);
+
+  // --- Seed Pat's Vacation ---
+  useEffect(() => {
+    if (!auth.currentUser) return;
+    const addVacations = async () => {
+      // Jusqu'à lundi prochain means March 3 to March 9 inclusive
+      const dates = ['2026-03-03', '2026-03-04', '2026-03-05', '2026-03-06', '2026-03-07', '2026-03-08', '2026-03-09'];
+      const hasAdded = localStorage.getItem('added_pat_vacations_mars3a9');
+      if (hasAdded) return;
+
+      for (const date of dates) {
+        const id = 'act-vacation-pat-v2-' + date;
+        const exists = activityStore.activities.some(a => a.id === id);
+        if (!exists) {
+          await FirebaseService.save({
+            id,
+            title: 'Vacances - Pat',
+            date,
+            startTime: '00:00',
+            endTime: '23:59',
+            type: 'Vie associative et implication' as any,
+            description: "En vacances jusqu'à lundi prochain",
+            status: 'draft',
+            budget: { estimatedCost: 0, actualCost: 0, items: [] },
+            materials: [],
+            staffing: { leadStaff: '', supportStaff: [], requiredRatio: '' },
+            evaluationCriteria: [],
+            rmjqDimensions: [],
+            logistics: { location: '', transportRequired: false },
+            riskManagement: { hazards: [], safetyProtocols: [] },
+            comments: [],
+            createdByEmail: auth.currentUser?.email || 'system'
+          } as unknown as Activity);
+        }
+      }
+      localStorage.setItem('added_pat_vacations_mars3a9', 'true');
+    };
+    addVacations();
+  }, [auth.currentUser, activityStore.activities]);
+
+  useEffect(() => {
+    if (!auth.currentUser || localStorage.getItem('fcm_permission_requested')) return;
+
+    const requestPermission = async () => {
+      const token = await FirebaseService.requestMessagingPermission();
+      if (token) {
+        localStorage.setItem('fcm_permission_requested', 'true');
+      }
+    };
+    // Delay request slightly for better UX
+    const timer = setTimeout(requestPermission, 5000);
+    return () => clearTimeout(timer);
+  }, [auth.currentUser]);
+
+  useEffect(() => {
+    if (!activityStore.isLoading) {
       const loadingScreen = document.getElementById('loading-screen');
       if (loadingScreen) {
         loadingScreen.style.opacity = '0';
         setTimeout(() => loadingScreen.remove(), 500);
       }
-    };
+    }
+  }, [activityStore.isLoading]);
 
-    initApp();
-    return () => unsubscribeActivities();
-  }, []);
-
-  // --- ACTIONS ---
-
-  const handleSaveActivity = async (activityToSave: Activity) => {
-    // Mise à jour optimiste
-    setActivities(prev => {
-      const exists = prev.some(a => a.id === activityToSave.id);
-      return exists ? prev.map(a => a.id === activityToSave.id ? activityToSave : a) : [...prev, activityToSave];
-    });
-
+  const handleSaveTheme = async (e: React.KeyboardEvent | React.FocusEvent) => {
+    if ('key' in e && e.key !== 'Enter') return;
+    setIsEditingTheme(false);
     try {
-      await FirebaseService.save(activityToSave);
+      await FirebaseService.saveTheme(calendar.currentMonthStr, monthTheme);
     } catch (e) {
-      console.error("Erreur sauvegarde Cloud, tentative locale...", e);
-      await ActivityService.save(activityToSave); 
-    }
-    setSelectedActivity(null);
-  };
-
-  const handleCreateActivity = (date: string) => {
-    setSelectedActivity(createEmptyActivity(date));
-  };
-
-  const handleGoogleLogin = async () => {
-    try { 
-        await FirebaseService.login(); 
-    } catch (e) { 
-        alert("Erreur de connexion Google. Vérifie ta connexion internet."); 
+      alert("Erreur lors de la sauvegarde du thème.");
     }
   };
 
-  const handleMicrosoftLogin = async () => {
-    try {
-        await FirebaseService.loginWithMicrosoft();
-    } catch (e) {
-        console.error(e);
-        alert("Erreur de connexion Microsoft. Vérifie que ton compte pro est bien autorisé.");
-    }
+  const handleExportHtml = () => {
+    const activeActivities = activityStore.activities.filter(a => a.isPostponed !== true);
+    HtmlGeneratorService.downloadHtml(activeActivities, calendar.currentDate, monthTheme);
   };
 
-  const handleDragStart = (e: React.DragEvent, activityId: string) => {
-    e.dataTransfer.setData("text/plain", activityId);
-    setDraggedActivityId(activityId);
+  const handleSubmitMonthForValidation = () => {
+    const recipients = ['admin@mdjescalejeunesse.ca', 'dg@mdjescalejeunesse.ca'].join(',');
+    const monthName = MONTH_NAMES[calendar.currentDate.getMonth()];
+    const year = calendar.currentDate.getFullYear();
+    const subject = encodeURIComponent(`[VALIDATION CALENDRIER] ${monthName} ${year}`);
+    const body = encodeURIComponent(
+      `Bonjour,\n\n` +
+      `Je vous soumets le calendrier complet pour le mois de ${monthName} ${year} pour validation.\n\n` +
+      `📌 Thématique : ${monthTheme || 'Non définie'}\n` +
+      `📅 Nombre d'activités : ${metrics.displayedActivities.length}\n` +
+      `💰 Budget total estimé : ${metrics.totalBudget.toFixed(2)} $\n` +
+      `⚠️ Jours restant à finaliser : ${metrics.daysToFinalize}\n\n` +
+      `Le calendrier est prêt à être révisé dans le Planificateur.\n\n` +
+      `— Envoyé depuis le Planificateur MDJ`
+    );
+    window.open(`mailto:${recipients}?subject=${subject}&body=${body}`, '_blank');
   };
 
-  const handleDrop = async (e: React.DragEvent, targetDate: string) => {
-    e.preventDefault();
-    if (!draggedActivityId) return;
-    const activityToMove = activities.find(a => a.id === draggedActivityId);
-    if (activityToMove && activityToMove.date !== targetDate) {
-      handleSaveActivity({ ...activityToMove, date: targetDate });
-    }
-    setDraggedActivityId(null);
-  };
-
-  // --- LOGIQUE CALENDRIER ---
-  const getCalendarDays = () => {
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
-    const firstDayOfMonth = new Date(year, month, 1);
-    const lastDayOfMonth = new Date(year, month + 1, 0);
-
-    let startOffset = firstDayOfMonth.getDay();
-    startOffset = startOffset === 0 ? 6 : startOffset - 1; // Lundi = 0
-
-    const days = [];
-    const prevMonthLastDay = new Date(year, month, 0).getDate();
-
-    // Jours précédents
-    for (let i = startOffset - 1; i >= 0; i--) {
-      days.push({ day: prevMonthLastDay - i, currentMonth: false, date: "" });
-    }
-    // Jours actuels
-    for (let i = 1; i <= lastDayOfMonth.getDate(); i++) {
-      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
-      days.push({ day: i, currentMonth: true, date: dateStr });
-    }
-    // Remplissage
-    const remaining = 42 - days.length;
-    for (let i = 1; i <= remaining; i++) {
-      days.push({ day: i, currentMonth: false, date: "" });
-    }
-    return days;
-  };
-
-  const getScoreColor = (score: number) => {
-    if (score >= 80) return 'bg-gray-900 border-cyan-500/50 text-cyan-400 shadow-[0_0_10px_rgba(0,255,255,0.2)]';
-    if (score >= 40) return 'bg-gray-900 border-yellow-500/50 text-yellow-400';
-    return 'bg-gray-900 border-orange-500/50 text-orange-400';
-  };
-
-  const monthNames = ["Janvier", "Février", "Mars", "Avril", "Mai", "Juin", "Juillet", "Août", "Septembre", "Octobre", "Novembre", "Décembre"];
-  const calendarDays = getCalendarDays();
-  const currentMonthStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`;
-  const displayedActivities = activities.filter(a => a.date.startsWith(currentMonthStr));
-  const totalBudget = displayedActivities.reduce((sum, act) => sum + (act.budget?.estimatedCost || 0), 0);
+  const currentUserAvatar = profile?.avatarUrl || getEmployeeAvatar(auth.currentUser);
+  const userEmail = auth.currentUser?.email?.toLowerCase() ?? '';
+  const isStaff = userEmail.endsWith('@mdjescalejeunesse.ca');
+  const userRole = getUserRole(auth.currentUser?.email ?? undefined);
+  const isAdmin = userRole === 'admin' || userRole === 'super_admin' || auth.isSuperAdmin;
+  const unreadMessagesCount = messages.filter(m => !m.isRead && m.senderId !== auth.currentUser?.email).length;
 
   return (
-    <div className="min-h-screen bg-gray-950 font-sans text-gray-100 pb-20">
-      
-      {/* --- HEADER --- */}
-      <header className="bg-gray-900/90 backdrop-blur-md border-b border-gray-800 sticky top-0 z-40 shadow-2xl">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
-          <div className="flex items-center gap-6">
-            <img src="https://mdjescalejeunesse.ca/wp-content/uploads/2024/01/mdj-header-l039escale-jeunesse-la-piaule-1.png" alt="Logo MDJ" className="h-10 w-auto" />
-            <div className="hidden lg:block h-8 w-px bg-white/10"></div>
-            <div>
-              <h1 className="text-xl font-bold text-white tracking-tight">Planificateur <span className="text-cyan-400">Jeunesse</span></h1>
-              <div className="flex items-center gap-2 mt-1">
-                <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1))} className="p-1 hover:bg-white/10 rounded-full transition-colors"><ChevronLeft className="w-4 h-4 text-cyan-400"/></button>
-                <p className="text-xs text-gray-400 uppercase tracking-widest font-medium min-w-[120px] text-center">
-                  {monthNames[currentDate.getMonth()]} {currentDate.getFullYear()}
-                </p>
-                <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1))} className="p-1 hover:bg-white/10 rounded-full transition-colors"><ChevronRight className="w-4 h-4 text-cyan-400"/></button>
-              </div>
-            </div>
-          </div>
+    <div className="min-h-screen bg-base text-primary flex flex-col transition-colors duration-300">
+      <div className="hidden lg:block">
+        <LeftRailNav
+          isAdmin={isAdmin}
+          isStaff={isStaff}
+          activeSection={activeSection}
+          onSectionChange={handleSectionChange}
+          onToggleMessenger={() => setShowMessenger(!showMessenger)}
+          onOpenSettings={() => setShowProfileModal(true)}
+          onLogoClick={() => setShowAboutModal(true)}
+          hasUnreadMessages={unreadMessagesCount > 0}
+        />
+      </div>
 
-          <div className="flex items-center gap-4">
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-bold transition-all bg-cyan-900/10 border-cyan-500/30 text-cyan-400`}>
-              <Cloud className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">En direct</span>
+      <div className="flex-1 flex flex-col lg:pl-20 pb-16 lg:pb-0 transition-all duration-300">
+        <MainHeader
+          monthTheme={monthTheme}
+          setMonthTheme={setMonthTheme}
+          handleSaveTheme={handleSaveTheme}
+          currentMonthName={`${MONTH_NAMES[calendar.currentDate.getMonth()]} ${calendar.currentDate.getFullYear()}`}
+          setShowChat={setShowChat}
+          setShowSyncPreview={setShowSyncPreview}
+          setShowProfileModal={setShowProfileModal}
+          currentUser={auth.currentUser}
+          currentUserAvatar={currentUserAvatar}
+          handleLogout={auth.handleLogout}
+          handleMicrosoftLogin={auth.handleMicrosoftLogin}
+          handleGoogleLogin={auth.handleGoogleLogin}
+          showLoginMenu={auth.showLoginMenu}
+          setShowLoginMenu={auth.setShowLoginMenu}
+          goToPrevMonth={calendar.goToPrevMonth}
+          goToNextMonth={calendar.goToNextMonth}
+          handleExportHtml={handleExportHtml}
+          isEditingTheme={isEditingTheme}
+          setIsEditingTheme={setIsEditingTheme}
+          isSuperAdmin={auth.isSuperAdmin}
+          alerts={{
+            incompleteAlerts: metrics.incompleteAlerts,
+            staffConflicts: metrics.staffConflicts,
+            lowStockItems: metrics.lowStockItems
+          }}
+          onSelectActivity={(id: string, tab?: string) => {
+            const act = activityStore.activities.find(a => a.id === id);
+            if (act) {
+              if (tab) setInitialModalTab(tab);
+              activityStore.setSelectedActivity(act);
+            }
+          }}
+          onManageInventory={(item: any) => {
+            setSelectedInventoryItem(item);
+            setShowInventoryModal(true);
+          }}
+          handleSubmitMonth={handleSubmitMonthForValidation}
+          handleEmailLogin={auth.handleEmailLogin}
+          onCreateActivity={activityStore.handleOpenNewActivity}
+        />
+
+        <main className="flex-1 flex relative overflow-hidden">
+          <Suspense fallback={
+            <div className="flex-1 flex flex-col items-center justify-center bg-base/50 gap-4">
+              <Loader2 className="w-8 h-8 animate-spin text-cyan-500 opacity-50" />
+              <p className="text-[10px] font-black uppercase tracking-widest text-muted animate-pulse">Chargement...</p>
             </div>
-            
-            {currentUser ? (
-              <div className="flex items-center gap-3">
-                <button onClick={() => setShowChat(!showChat)} className={`p-2 rounded-xl transition-all relative ${showChat ? 'bg-fuchsia-600 text-white' : 'bg-white/5 text-gray-400 hover:text-white'}`}>
-                  <MessageSquare className="w-5 h-5" />
-                  <span className="absolute -top-1 -right-1 w-2 h-2 bg-green-500 rounded-full border-2 border-gray-900"></span>
-                </button>
-                <div className="flex items-center gap-2 bg-white/5 pl-2 pr-3 py-1 rounded-full border border-white/10">
-                  <div className="w-6 h-6 rounded-full bg-cyan-900/20 flex items-center justify-center overflow-hidden">
-                    {currentUser.photoURL ? <img src={currentUser.photoURL} className="w-6 h-6" alt="Profil" /> : <UserIcon className="w-3.5 h-3.5 text-cyan-400" />}
+          }>
+            {activeSection === 'calendar' ? (
+              <div className="flex-1 flex flex-col relative overflow-hidden">
+                <div className="flex-1 p-6 space-y-4 overflow-auto">
+                  {/* Compact toolbar: Legend + Filters on same row */}
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <CalendarLegend />
+                    <div className="flex items-center gap-2">
+                      <DashboardFilters
+                        filters={activityStore.filters}
+                        onFilterChange={activityStore.setFilters}
+                      />
+                    </div>
                   </div>
-                  <button onClick={() => FirebaseService.logout()} title="Déconnexion" className="p-1 text-gray-500 hover:text-red-400"><LogOut className="w-4 h-4"/></button>
-                </div>
-              </div>
-            ) : (
-                <div className="relative">
-                    {!showLoginMenu ? (
-                        <button onClick={() => setShowLoginMenu(true)} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-cyan-400 text-gray-900 font-bold text-xs hover:scale-105 transition-all shadow-[0_0_15px_rgba(0,255,255,0.3)]">
-                            <LogIn className="w-4 h-4" /> CONNEXION
-                        </button>
-                    ) : (
-                        <div className="absolute top-full right-0 mt-2 w-64 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl p-2 z-50 flex flex-col gap-2 animate-in fade-in slide-in-from-top-2">
-                             <button onClick={handleGoogleLogin} className="flex items-center gap-3 w-full px-4 py-3 rounded-lg bg-white/5 hover:bg-white/10 text-white font-medium text-xs transition-colors border border-transparent hover:border-white/20">
-                                <img src="https://www.google.com/favicon.ico" className="w-4 h-4" alt="Google" />
-                                Continuer avec Google
-                             </button>
-                             <button onClick={handleMicrosoftLogin} className="flex items-center gap-3 w-full px-4 py-3 rounded-lg bg-[#0078d4]/10 hover:bg-[#0078d4]/20 text-white font-medium text-xs transition-colors border border-[#0078d4]/30 hover:border-[#0078d4]">
-                                <svg className="w-4 h-4" viewBox="0 0 23 23" xmlns="http://www.w3.org/2000/svg"><path fill="#f35325" d="M1 1h10v10H1z"/><path fill="#81bc06" d="M12 1h10v10H12z"/><path fill="#05a6f0" d="M1 12h10v10H1z"/><path fill="#ffba08" d="M12 12h10v10H12z"/></svg>
-                                Connexion Microsoft 365
-                             </button>
-                             <div className="border-t border-gray-800 my-1"></div>
-                             <button onClick={() => setShowLoginMenu(false)} className="text-[10px] text-gray-500 hover:text-gray-300 w-full text-center py-1">Annuler</button>
-                        </div>
-                    )}
-                </div>
-            )}
-            <button onClick={() => setShowConfig(true)} className="p-2 bg-white/5 rounded-xl border border-white/10 text-gray-400 hover:text-white"><Settings className="w-5 h-5" /></button>
-          </div>
-        </div>
-      </header>
 
-      {/* --- CONTENU PRINCIPAL --- */}
-      <main className="max-w-7xl mx-auto px-6 py-10">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
-          {/* COLONNE GAUCHE : CALENDRIER */}
-          <div className="lg:col-span-2 bg-gray-900/50 backdrop-blur rounded-3xl p-8 border border-white/10">
-            <div className="flex justify-between items-center mb-8">
-              <h2 className="text-2xl font-bold text-white flex items-center gap-3"><CalendarIcon className="w-6 h-6 text-cyan-400"/> Calendrier interactif</h2>
-              <button onClick={() => HtmlGeneratorService.downloadHtml(activities, currentDate)} className="flex items-center gap-2 bg-white/5 text-gray-300 border border-white/10 px-4 py-2 rounded-xl hover:bg-white/10 text-xs font-bold uppercase">
-                <Code className="w-4 h-4" /> EXPORTER HTML
+                  {/* Calendar Grid — FULL WIDTH */}
+                  <div className="relative">
+                    <CalendarGrid
+                      calendarDays={calendar.calendarDays}
+                      activities={activityStore.filteredActivities}
+                      currentUser={auth.currentUser}
+                      isSuperAdmin={auth.isSuperAdmin}
+                      currentMonthName={MONTH_NAMES[calendar.currentDate.getMonth()]}
+                      onSelectActivity={activityStore.setSelectedActivity}
+                      onCreateActivity={activityStore.handleCreateActivity}
+                      onCopyActivity={activityStore.handleCopyActivity}
+                      onPasteActivity={activityStore.handlePasteActivity}
+                      onDeleteActivity={(id) => {
+                        if (window.confirm("Supprimer définitivement cette activité ?")) {
+                          FirebaseService.delete(id);
+                        }
+                      }}
+                      copiedActivity={activityStore.copiedActivity}
+                      dragOverDate={dragOverDate}
+                      setDragOverDate={setDragOverDate}
+                      handleDrop={async (activityId, targetDate) => {
+                        const act = activityStore.activities.find(a => a.id === activityId);
+                        if (act) {
+                          await FirebaseService.save({ ...act, date: targetDate, isPostponed: false });
+                        }
+                      }}
+                      onQuickSpecialDay={activityStore.handleQuickSpecialDay}
+                    />
+
+                    {/* FAB: Now absolute inside the calendar grid area specifically */}
+                    <button
+                      onClick={activityStore.handleOpenNewActivity}
+                      className="hidden lg:flex absolute bottom-6 right-6 w-14 h-14 bg-cyan-500 hover:bg-cyan-400 rounded-full shadow-[0_0_20px_rgba(0,255,255,0.3)] items-center justify-center text-white z-50 animate-bounce active:scale-95 transition-all duration-200"
+                    >
+                      <Plus className="w-8 h-8" />
+                    </button>
+                  </div>
+
+                  {/* Secondary panels below calendar */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4">
+                    <AbsencesPanel
+                      activities={activityStore.activities}
+                      onAddAbsence={auth.currentUser ? () => {
+                        setInitialModalTab('absences');
+                        setShowProfileModal(true);
+                      } : undefined}
+                    />
+                    <PostponedPanel
+                      activities={activityStore.activities}
+                      dragOverDate={dragOverDate}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        if (auth.currentUser) setDragOverDate('postponed');
+                      }}
+                      onDragLeave={() => setDragOverDate(null)}
+                      onDrop={async (e) => {
+                        e.preventDefault();
+                        setDragOverDate(null);
+                        if (!auth.currentUser) return;
+                        const activityId = e.dataTransfer.getData('text/plain');
+                        const act = activityStore.activities.find(a => a.id === activityId);
+                        if (act && !act.isPostponed) {
+                          await activityStore.handleSaveActivity({ ...act, isPostponed: true });
+                        }
+                      }}
+                      onSelectActivity={activityStore.setSelectedActivity}
+                      currentUser={auth.currentUser}
+                    />
+                  </div>
+                </div>
+
+                {/* FAB: Now absolute inside the calendar frame */}
+                {/* The FAB button was moved inside the CalendarGrid's parent div */}
+              </div>
+            ) : activeSection === 'web_registrations' ? (
+              <div className="flex-1 overflow-auto">
+                <WebRegistrationsPanel
+                  onClose={() => setActiveSection('calendar')}
+                  activities={activityStore.activities.map(a => ({ id: a.id, title: a.title, date: a.date }))}
+                />
+              </div>
+            ) : null}
+          </Suspense>
+
+          {/* ═══ COLLAPSIBLE SIDEBAR (Right Panel) ═══ */}
+          {activeSection === 'calendar' && (
+            <aside className="hidden xl:block w-[340px] shrink-0 bg-surface/50 backdrop-blur-sm overflow-y-auto p-5">
+              <DashboardSidebar
+                isAdmin={isAdmin}
+                auth={auth}
+                metrics={metrics}
+                activityStore={activityStore}
+                handleCreatePRFromAlert={handleCreatePRFromAlert}
+                onRMJQSync={async () => {
+                  try {
+                    // Step 1: Migrate old types to new RMJQ volets
+                    const migration = await FirebaseService.migrateActivityTypes();
+                    // Step 2: Update RMJQ dimensions
+                    const count = await FirebaseService.batchUpdateRMJQDimensions();
+                    alert(`Migration: ${migration.updated} types corrigés (${migration.skipped} déjà conformes).\nDimensions: ${count} activités mises à jour.`);
+                    if (migration.details.length > 0) {
+                      console.log('[Migration Details]', migration.details);
+                    }
+                  } catch (err) {
+                    console.error("RMJQ Sync error:", err);
+                    alert("Erreur lors de la synchronisation RMJQ.");
+                  }
+                }}
+                onShowReports={() => setShowReports(true)}
+                onShowMembers={() => setShowMembers(true)}
+                onShowGovernance={() => setShowGovernance(true)}
+                onShowFinancial={() => setShowFinancial(true)}
+                onShowPsoc={() => setShowPsocWizard(true)}
+                onSelectActivityCallback={(activityId, tab) => {
+                  const act = activityStore.activities.find(a => a.id === activityId);
+                  if (act) {
+                    setInitialModalTab(tab);
+                    activityStore.setSelectedActivity(act);
+                  }
+                }}
+                onManageInventory={(item: any) => {
+                  setSelectedInventoryItem(item);
+                  setShowInventoryModal(true);
+                }}
+              />
+            </aside>
+          )}
+        </main>
+      </div>
+
+      {/* ═══ MODALS ═══ */}
+      <Suspense fallback={null}>
+        {activityStore.selectedActivity && (
+          <ActivityModal
+            activity={activityStore.selectedActivity}
+            onClose={() => {
+              activityStore.setSelectedActivity(null);
+              setInitialModalTab(undefined);
+            }}
+            onSave={activityStore.handleUpdateActivity}
+            onDelete={activityStore.handleDeleteActivityFromModal}
+            onClone={activityStore.handleCloneActivity}
+            userEmail={auth.currentUser?.email || undefined}
+            allActivities={activityStore.activities}
+            initialTab={initialModalTab}
+          />
+        )}
+        {showChat && (
+          <ChatPanel currentUser={auth.currentUser!} onClose={() => setShowChat(false)} isOpen={showChat} />
+        )}
+        {showSyncPreview && (
+          <SyncPreviewModal onClose={() => setShowSyncPreview(false)} />
+        )}
+        {showProfileModal && auth.currentUser && profile && (
+          <EmployeeProfileModal
+            userEmail={auth.currentUser.email || ''}
+            userName={auth.currentUser.displayName || getEmployeeName(auth.currentUser.email || '')}
+            profile={profile}
+            updateProfile={updateProfile}
+            absences={activityStore.activities}
+            onClose={() => setShowProfileModal(false)}
+            initialTab={initialModalTab as any}
+          />
+        )}
+        {showMessenger && auth.currentUser && profile && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
+            <div className="relative w-full max-w-2xl">
+              <button
+                onClick={() => setShowMessenger(false)}
+                className="absolute -top-12 right-0 p-2 text-white/70 hover:text-white transition-colors"
+              >
+                Fermer
               </button>
-            </div>
-            
-            <div className="grid grid-cols-7 gap-px bg-white/5 rounded-2xl overflow-hidden border border-white/10">
-              {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map(d => (
-                <div key={d} className="bg-gray-800 p-3 text-center text-[10px] font-black text-gray-500 uppercase tracking-widest">{d}</div>
-              ))}
-              {calendarDays.map((dayObj, idx) => {
-                const daysActivities = activities.filter(a => a.date === dayObj.date);
-                const schoolEvent = dayObj.date ? SCHOOL_CALENDAR_DATA[dayObj.date] : null;
-
-                return (
-                  <div 
-                    key={idx} 
-                    onDragOver={(e) => e.preventDefault()} 
-                    onDrop={(e) => dayObj.date && handleDrop(e, dayObj.date)} 
-                    className={`h-32 p-2 border-t border-l border-white/5 relative group transition-colors ${!dayObj.currentMonth ? 'opacity-20 bg-black/20' : 'bg-gray-900/60 hover:bg-white/5'}`}
-                  >
-                    <div className="flex justify-between items-start">
-                      <span className={`text-xs font-bold font-mono ${schoolEvent ? 'text-cyan-400' : 'text-gray-600'}`}>{dayObj.day}</span>
-                      {schoolEvent && <span className="text-[8px] bg-cyan-900/20 text-cyan-400 px-1 rounded uppercase font-bold">{schoolEvent.label}</span>}
-                    </div>
-                    <div className="mt-1 space-y-1 overflow-y-auto max-h-[80px] custom-scrollbar">
-                      {daysActivities.map(act => (
-                        <button key={act.id} onClick={() => setSelectedActivity(act)} draggable onDragStart={(e) => handleDragStart(e, act.id)} className={`w-full text-left text-[9px] font-bold p-1.5 rounded border truncate transition-all ${getScoreColor(act.preparationScore)}`}>
-                          {act.title}
-                        </button>
-                      ))}
-                    </div>
-                    {dayObj.currentMonth && dayObj.date && (
-                      <button onClick={() => handleCreateActivity(dayObj.date)} className="absolute bottom-1 right-1 opacity-0 group-hover:opacity-100 p-1.5 bg-cyan-400 text-black rounded-full hover:scale-110 shadow-lg">
-                        <Plus className="w-3 h-3" />
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
+              <InternalMessenger
+                currentUser={{
+                  id: auth.currentUser.email || 'unknown',
+                  name: auth.currentUser.displayName || getEmployeeName(auth.currentUser.email || ''),
+                  avatar: currentUserAvatar || undefined
+                }}
+                initialMessages={messages}
+                onSendMessage={async (msg) => {
+                  await FirebaseService.sendMessage(msg);
+                }}
+                onMarkAsRead={async (ids) => {
+                  await FirebaseService.markMessagesAsRead(ids);
+                }}
+                teamDirectory={TEAM_DIRECTORY}
+              />
             </div>
           </div>
+        )}
+        {showReports && (
+          <ReportsPanel
+            activities={activityStore.activities}
+            onClose={() => {
+              setShowReports(false);
+              setActiveSection('calendar');
+            }}
+            userEmail={auth.currentUser?.email || undefined}
+          />
+        )}
+        {showInventoryModal && (
+          <InventoryItemModal
+            item={selectedInventoryItem}
+            onClose={() => {
+              setShowInventoryModal(false);
+              setSelectedInventoryItem(undefined);
+            }}
+            onSave={saveInventoryItem}
+            onDelete={deleteInventoryItem}
+          />
+        )}
+        {showMembers && isStaff && (
+          <MemberRegistryModal
+            userEmail={auth.currentUser?.email || undefined}
+            onClose={() => {
+              setShowMembers(false);
+              setActiveSection('calendar');
+            }}
+          />
+        )}
+        {showGovernance && isAdmin && (
+          <GovernanceModule
+            userEmail={auth.currentUser?.email || undefined}
+            onClose={() => {
+              setShowGovernance(false);
+              setActiveSection('calendar');
+            }}
+          />
+        )}
+        {showFinancial && isAdmin && (
+          <FinancialHealthPanel
+            userEmail={auth.currentUser?.email || undefined}
+            onClose={() => {
+              setShowFinancial(false);
+              setActiveSection('calendar');
+            }}
+          />
+        )}
+        {showPsocWizard && (
+          <PsocExportWizard
+            activities={activityStore.activities}
+            onClose={() => {
+              setShowPsocWizard(false);
+              setActiveSection('calendar');
+            }}
+          />
+        )}
+        {showAboutModal && (
+          <AboutModal onClose={() => setShowAboutModal(false)} />
+        )}
+      </Suspense>
 
-          {/* COLONNE DROITE : STATS & À FAIRE */}
-          <div className="space-y-6">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-gray-900/50 backdrop-blur p-4 rounded-2xl border-l-4 border-cyan-400">
-                <div className="text-[10px] font-bold text-gray-500 uppercase">Budget Mensuel</div>
-                <div className="text-xl font-black text-white">{totalBudget.toFixed(0)}$</div>
-              </div>
-              <div className="bg-gray-900/50 backdrop-blur p-4 rounded-2xl border-l-4 border-fuchsia-500">
-                <div className="text-[10px] font-bold text-gray-500 uppercase">Progression</div>
-                <div className="text-xl font-black text-white">{displayedActivities.length} act.</div>
-              </div>
-            </div>
-            
-            <div className="bg-gray-800/40 rounded-3xl p-6 border border-white/10">
-               <h3 className="font-bold text-white mb-4 flex items-center gap-2"><BellRing className="w-5 h-5 text-orange-400"/> À finaliser</h3>
-               <div className="space-y-3">
-                 {displayedActivities.filter(a => a.preparationScore < 80).slice(0, 5).map(act => (
-                   <div key={act.id} onClick={() => setSelectedActivity(act)} className="cursor-pointer p-3 bg-gray-900/50 rounded-xl border border-white/5 hover:border-cyan-500/30 transition-all">
-                     <div className="text-xs font-bold text-white">{act.title}</div>
-                     <div className="flex justify-between items-center mt-1">
-                       <span className="text-[9px] text-gray-500 font-mono">{act.date}</span>
-                       <span className="text-[9px] font-bold text-orange-400">{act.preparationScore}%</span>
-                     </div>
-                   </div>
-                 ))}
-                 {displayedActivities.filter(a => a.preparationScore < 80).length === 0 && (
-                     <p className="text-xs text-gray-500 italic text-center">Aucune activité en retard. Beau travail !</p>
-                 )}
-               </div>
-            </div>
-          </div>
-        </div>
-      </main>
-
-      {/* --- MODALES --- */}
-      {selectedActivity && (
-        <ActivityModal 
-            activity={selectedActivity} 
-            onClose={() => setSelectedActivity(null)} 
-            onSave={handleSaveActivity} 
-        />
-      )}
-      
-      {showConfig && (
-        <ConfigModal 
-            onClose={() => setShowConfig(false)} 
-            onSave={() => setShowConfig(false)} 
-        />
-      )}
-      
-      <ChatPanel 
-        currentUser={currentUser} 
-        isOpen={showChat} 
-        onClose={() => setShowChat(false)} 
+      <MobileBottomNav
+        isAdmin={isAdmin}
+        isStaff={isStaff}
+        activeSection={activeSection}
+        onSectionChange={handleSectionChange}
+        onToggleMessenger={() => setShowMessenger(!showMessenger)}
+        onOpenSettings={() => setShowProfileModal(true)}
+        hasUnreadMessages={unreadMessagesCount > 0}
+        onCreateActivity={() => activityStore.handleCreateActivity(new Date().toISOString().split('T')[0])}
       />
-    </div>
+      <footer className="w-full py-4 text-center mt-auto">
+        <p className="text-[10px] text-muted font-bold uppercase tracking-[0.3em]">Propulsé par MDJ L'Escale Jeunesse © 2026</p>
+      </footer>
+
+
+
+
+    </div >
   );
 };
+
 
 export default App;

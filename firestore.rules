@@ -1,10 +1,115 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      // Accès restreint aux employés MDJ authentifiés
-      allow read, write: if request.auth != null && 
-        request.auth.token.email.matches('.*@mdjescalejeunesse[.]ca');
+    match /sync_youth_profiles/{docId} {
+      allow write: if true;
+      allow read, delete: if isStaff();
+    }
+    
+    // Logs quotidiens pour synchronisation
+    match /sync_daily_logs/{docId} {
+      allow read, write: if request.auth != null && request.auth.token.email.matches('.*@mdjescalejeunesse\\.ca$');
+    }
+
+    // Les règles pour 'activities' sont définies plus bas (ligne 70) 
+    // pour éviter les conflits et assurer une sécurité stricte.
+
+
+    // Fonctions de sécurité RBAC
+    function getUserData() {
+      return get(/databases/$(database)/documents/employee_profiles/$(request.auth.token.email)).data;
+    }
+
+    function isStaff() {
+      return request.auth != null && request.auth.token.email.matches('.*@mdjescalejeunesse\\.ca$');
+    }
+
+    function isHardcodedAdmin() {
+      return request.auth != null && 
+        (request.auth.token.email == 'gestion@mdjescalejeunesse.ca' || 
+         request.auth.token.email == 'dg@mdjescalejeunesse.ca');
+    }
+
+    function isAdmin() {
+      return isHardcodedAdmin() || (request.auth != null && 
+        (getUserData().role == 'admin' || getUserData().role == 'super_admin'));
+    }
+
+    function isAnimator() {
+      // Pour la transition, on garde isAnimator mais on permet à tout le staff
+      return isStaff();
+    }
+
+    // Thématiques mensuelles
+    match /themes/{themeId} {
+      allow read: if true;
+      allow write: if isStaff();
+    }
+
+    // Configurations globales (suggestions, etc.)
+    match /settings/{docId} {
+      allow read, write: if isStaff();
+    }
+
+    // Profils employés
+    match /employee_profiles/{email} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+
+    // Inventaire & Achats
+    match /inventory_items/{itemId} {
+      allow read, write: if isStaff();
+    }
+
+    match /purchase_requests/{requestId} {
+      allow read, write: if isStaff();
+      allow delete: if isAdmin();
+    }
+
+    match /material_reservations/{reservationId} {
+      allow read, write: if isStaff();
+    }
+
+    // Registre PSSOC (Membres Jeunes)
+    match /members/{memberId} {
+      allow read, write: if isStaff();
+    }
+
+    // Journal de Bord (Activités)
+    match /activities/{activityId} {
+      allow read, write: if isStaff();
+      allow delete: if isAdmin();
+    }
+
+    // Inscriptions Web (provenant du site mdjsiteweb2026)
+    match /web_registrations/{registrationId} {
+      // Le public peut uniquement soumettre un formulaire (création)
+      allow create: if true;
+      // Seuls les employés peuvent consulter et gérer ces inscriptions
+      allow read, update, delete: if isStaff();
+    }
+
+    // Gouvernance & CA (Direction uniquement)
+    match /board_members/{boardMemberId} {
+      allow read, write: if isAdmin();
+    }
+    match /vault_documents/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Santé Financière (Direction uniquement)
+    match /financial_health/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /messages/{messageId} {
+      allow read, write: if isStaff();
+    }
+
+    // Jetons de notification Push
+    match /user_tokens/{email} {
+      allow read, write: if request.auth != null && request.auth.token.email == email;
     }
   }
 }

@@ -1,4 +1,9 @@
 {
+  "include": [
+    "env.d.ts",
+    "**/*.ts",
+    "**/*.tsx"
+  ],
   "compilerOptions": {
     "target": "ES2022",
     "experimentalDecorators": true,
@@ -10,6 +15,10 @@
       "DOM.Iterable"
     ],
     "skipLibCheck": true,
+    "strict": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
     "types": [
       "node"
     ],
