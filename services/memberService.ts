@@ -4,7 +4,7 @@ import { Member } from '../types';
 import { MemberSchema } from '../lib/schemas';
 
 const LOCAL_COLLECTION = 'members';
-const WEB_COLLECTION = 'sync_youth_profiles';
+const WEB_COLLECTION = 'users';
 
 /**
  * Génère un code d'anonymisation pour un membre (ex: LP-1008)

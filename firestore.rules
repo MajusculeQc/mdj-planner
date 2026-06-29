@@ -1,43 +1,70 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /sync_youth_profiles/{docId} {
-      allow write: if true;
-      allow read, delete: if isStaff();
+  
+    // --- Helper Functions ---
+    function isAuthenticated() {
+      return request.auth != null;
     }
     
-    // Logs quotidiens pour synchronisation
-    match /sync_daily_logs/{docId} {
-      allow read, write: if request.auth != null && request.auth.token.email.matches('.*@mdjescalejeunesse\\.ca$');
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
     }
 
-    // Les règles pour 'activities' sont définies plus bas (ligne 70) 
-    // pour éviter les conflits et assurer une sécurité stricte.
-
-
-    // Fonctions de sécurité RBAC
     function getUserData() {
       return get(/databases/$(database)/documents/employee_profiles/$(request.auth.token.email)).data;
     }
 
     function isStaff() {
-      return request.auth != null && request.auth.token.email.matches('.*@mdjescalejeunesse\\.ca$');
+      return isAuthenticated() && (
+        request.auth.token.get('email', '').matches('.*@mdjescalejeunesse\\.ca$') ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['ADMIN', 'STAFF', 'VOLUNTEER'])
+      );
     }
 
     function isHardcodedAdmin() {
-      return request.auth != null && 
-        (request.auth.token.email == 'gestion@mdjescalejeunesse.ca' || 
-         request.auth.token.email == 'dg@mdjescalejeunesse.ca');
+      return isAuthenticated() && 
+        (request.auth.token.get('email', '') == 'gestion@mdjescalejeunesse.ca' || 
+         request.auth.token.get('email', '') == 'dg@mdjescalejeunesse.ca');
     }
 
     function isAdmin() {
-      return isHardcodedAdmin() || (request.auth != null && 
+      return isHardcodedAdmin() || (isAuthenticated() && 
         (getUserData().role == 'admin' || getUserData().role == 'super_admin'));
     }
 
-    function isAnimator() {
-      // Pour la transition, on garde isAnimator mais on permet à tout le staff
-      return isStaff();
+    // --- Collections ---
+
+    // Users Collection (Website Profiles)
+    match /users/{userId} {
+      allow read, write: if isOwner(userId) || isStaff();
+    }
+
+    // Registrations subcollection under users
+    match /users/{userId}/registrations/{registrationId} {
+      allow read, write: if isOwner(userId) || isStaff();
+    }
+
+    // Collection Group: registrations
+    match /{path=**}/registrations/{registrationId} {
+      allow read: if isStaff();
+    }
+
+    // Sync profiles (Fallback / Backward compatibility)
+    match /sync_youth_profiles/{docId} {
+      allow read, delete: if isStaff();
+    }
+
+    // Inscriptions Web
+    match /web_registrations/{registrationId} {
+      allow create: if true;
+      allow read, update, delete: if isStaff();
+    }
+
+    // Logs quotidiens pour synchronisation
+    match /sync_daily_logs/{docId} {
+      allow read, write: if isStaff();
     }
 
     // Thématiques mensuelles
@@ -46,7 +73,7 @@ service cloud.firestore {
       allow write: if isStaff();
     }
 
-    // Configurations globales (suggestions, etc.)
+    // Configurations globales
     match /settings/{docId} {
       allow read, write: if isStaff();
     }
@@ -54,7 +81,7 @@ service cloud.firestore {
     // Profils employés
     match /employee_profiles/{email} {
       allow read: if isStaff();
-      allow write: if isAdmin();
+      allow write: if isAdmin() || (isAuthenticated() && request.auth.token.email == email);
     }
 
     // Inventaire & Achats
@@ -71,23 +98,45 @@ service cloud.firestore {
       allow read, write: if isStaff();
     }
 
-    // Registre PSSOC (Membres Jeunes)
+    // Registre interne PSSOC (Membres locaux)
     match /members/{memberId} {
       allow read, write: if isStaff();
     }
 
-    // Journal de Bord (Activités)
-    match /activities/{activityId} {
+    // Partenaires personnalisés
+    match /custom_partners/{partnerId} {
       allow read, write: if isStaff();
-      allow delete: if isAdmin();
     }
 
-    // Inscriptions Web (provenant du site mdjsiteweb2026)
-    match /web_registrations/{registrationId} {
-      // Le public peut uniquement soumettre un formulaire (création)
-      allow create: if true;
-      // Seuls les employés peuvent consulter et gérer ces inscriptions
-      allow read, update, delete: if isStaff();
+    // Activités du planificateur
+    match /activities/{activityId} {
+      allow read: if true; // Public read pour le calendrier
+      allow create, delete: if isStaff();
+      allow update: if isStaff() || (
+        isAuthenticated() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['registeredCount'])
+      );
+    }
+
+    // Activités publiques du site web
+    match /web_activities/{activityId} {
+      allow read: if true;
+      allow create, delete: if isStaff();
+      allow update: if isStaff() || (
+        isAuthenticated() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['registeredCount'])
+      );
+    }
+
+    // Transactions
+    match /transactions/{transactionId} {
+      allow read, write: if isStaff();
+    }
+
+    // Site Configuration
+    match /site_config/{docId} {
+      allow read: if true;
+      allow write: if isStaff();
     }
 
     // Gouvernance & CA (Direction uniquement)
@@ -98,18 +147,35 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
-    // Santé Financière (Direction uniquement)
+    // Santé Financière
     match /financial_health/{docId} {
       allow read, write: if isAdmin();
     }
 
+    // Messagerie interne
     match /messages/{messageId} {
       allow read, write: if isStaff();
     }
 
-    // Jetons de notification Push
+    // Jetons de notification
     match /user_tokens/{email} {
-      allow read, write: if request.auth != null && request.auth.token.email == email;
+      allow read, write: if isAuthenticated() && request.auth.token.email == email;
     }
+
+    // Site web content fallback collections
+    match /hero/{docId} { allow read: if true; allow write: if isStaff(); }
+    match /gallery/{docId} { allow read: if true; allow write: if isStaff(); }
+    match /team_staff/{docId} { allow read: if true; allow write: if isStaff(); }
+    match /team_board/{docId} { allow read: if true; allow write: if isStaff(); }
+    match /partners_list/{docId} { allow read: if true; allow write: if isStaff(); }
+    match /parents_info/{docId} { allow read: if true; allow write: if isStaff(); }
+    match /emergency/{docId} { allow read: if true; allow write: if isStaff(); }
+    match /documents/{docId} { allow read: if true; allow write: if isStaff(); }
+    match /about_overview/{docId} { allow read: if true; allow write: if isStaff(); }
+    match /history_timeline/{docId} { allow read: if true; allow write: if isStaff(); }
+    match /contact_info/{docId} { allow read: if true; allow write: if isStaff(); }
+    match /calendar_config/{docId} { allow read: if true; allow write: if isStaff(); }
+    match /about_impact/{docId} { allow read: if true; allow write: if isStaff(); }
+    match /about_testimonials/{docId} { allow read: if true; allow write: if isStaff(); }
   }
 }
