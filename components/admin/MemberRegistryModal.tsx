@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Users, X, Plus, Search, Mail, Phone, HeartPulse, Edit2, Trash2 } from 'lucide-react';
 import { useMembers } from '../../hooks/useMembers';
 import { Member } from '../../types';
-import { MemberGenderEnum, MemberStatusEnum } from '../../lib/schemas';
+import { MemberGenderEnum, MemberStatusEnum, MemberTypeEnum, MemberReferenceSourceEnum } from '../../lib/schemas';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
@@ -19,14 +19,16 @@ export const MemberRegistryModal: React.FC<MemberRegistryModalProps> = ({ userEm
     const [editingMember, setEditingMember] = useState<Member | null>(null);
 
     const [formData, setFormData] = useState<Partial<Member>>({
-        firstName: '', lastName: '', birthDate: '', gender: 'Préfère ne pas répondre',
-        status: 'Actif', allergies: '', emergencyContact: '', parentContact: '', notes: ''
+        firstName: '', preferredFirstName: '', lastName: '', birthDate: '', gender: 'Préfère ne pas répondre',
+        status: 'Actif', memberType: 'Membre actif jeune', allergies: '', emergencyContact: '', parentContact: '', notes: '',
+        schoolOrNeighbourhood: '', referenceSource: 'Autre'
     });
 
     const resetForm = () => {
         setFormData({
-            firstName: '', lastName: '', birthDate: '', gender: 'Préfère ne pas répondre',
-            status: 'Actif', allergies: '', emergencyContact: '', parentContact: '', notes: ''
+            firstName: '', preferredFirstName: '', lastName: '', birthDate: '', gender: 'Préfère ne pas répondre',
+            status: 'Actif', memberType: 'Membre actif jeune', allergies: '', emergencyContact: '', parentContact: '', notes: '',
+            schoolOrNeighbourhood: '', referenceSource: 'Autre'
         });
         setIsCreating(false);
         setEditingMember(null);
@@ -48,7 +50,7 @@ export const MemberRegistryModal: React.FC<MemberRegistryModalProps> = ({ userEm
     const calculateAge = (birthDate: string) => {
         if (!birthDate) return '?';
         const today = new Date();
-        const birthDateObj = new Date(birthDate);
+        const birthDateObj = new Date(birthDate + 'T00:00:00');
         let age = today.getFullYear() - birthDateObj.getFullYear();
         const m = today.getMonth() - birthDateObj.getMonth();
         if (m < 0 || (m === 0 && today.getDate() < birthDateObj.getDate())) {
@@ -59,6 +61,7 @@ export const MemberRegistryModal: React.FC<MemberRegistryModalProps> = ({ userEm
 
     const filteredMembers = members.filter(m =>
         m.firstName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        m.preferredFirstName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         m.lastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
         m.code?.toLowerCase().includes(searchTerm.toLowerCase())
     );
@@ -68,14 +71,14 @@ export const MemberRegistryModal: React.FC<MemberRegistryModalProps> = ({ userEm
             const age = calculateAge(m.birthDate);
             return age !== '?' && (age as number) <= 18;
         })
-        .sort((a, b) => `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`));
+        .sort((a, b) => `${a.preferredFirstName || a.firstName} ${a.lastName}`.localeCompare(`${b.preferredFirstName || b.firstName} ${b.lastName}`));
 
     const adultMembers = filteredMembers
         .filter(m => {
             const age = calculateAge(m.birthDate);
             return age !== '?' && (age as number) >= 19;
         })
-        .sort((a, b) => `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`));
+        .sort((a, b) => `${a.preferredFirstName || a.firstName} ${a.lastName}`.localeCompare(`${b.preferredFirstName || b.firstName} ${b.lastName}`));
 
     const renderMemberButton = (m: Member) => (
         <button
@@ -88,7 +91,9 @@ export const MemberRegistryModal: React.FC<MemberRegistryModalProps> = ({ userEm
         >
             <div className="flex flex-col">
                 <div className="flex items-center gap-2">
-                    <p className="font-bold text-sm text-slate-900 dark:text-white">{m.firstName} {m.lastName}</p>
+                    <p className="font-bold text-sm text-slate-900 dark:text-white">
+                        {m.preferredFirstName ? `${m.firstName} (${m.preferredFirstName})` : m.firstName} {m.lastName}
+                    </p>
                     {(m as any).isSynced && (
                         <span className="text-[8px] font-black bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 px-1 py-0.5 rounded border border-emerald-200 dark:border-emerald-500/30">SYNC WEB</span>
                     )}
@@ -193,6 +198,10 @@ export const MemberRegistryModal: React.FC<MemberRegistryModalProps> = ({ userEm
                                         <label className="text-[10px] font-bold text-slate-500 uppercase">Nom</label>
                                         <input type="text" value={formData.lastName} onChange={e => setFormData({ ...formData, lastName: e.target.value })} className="w-full px-4 py-2 rounded-xl border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:ring-2 focus:ring-indigo-500/30" />
                                     </div>
+                                    <div className="space-y-1 col-span-2">
+                                        <label className="text-[10px] font-bold text-slate-500 uppercase">Prénom choisi / usuel (Choix du prénom)</label>
+                                        <input type="text" value={formData.preferredFirstName || ''} onChange={e => setFormData({ ...formData, preferredFirstName: e.target.value })} placeholder="Prénom choisi par le jeune (ex: Loan)" className="w-full px-4 py-2 rounded-xl border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:ring-2 focus:ring-indigo-500/30 dark:text-white" />
+                                    </div>
                                     <div className="space-y-1">
                                         <label className="text-[10px] font-bold text-slate-500 uppercase">Date de naissance</label>
                                         <input type="date" value={formData.birthDate} onChange={e => setFormData({ ...formData, birthDate: e.target.value })} className="w-full px-4 py-2 rounded-xl border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:ring-2 focus:ring-indigo-500/30 text-slate-900 dark:text-white [color-scheme:light] dark:[color-scheme:dark]" />
@@ -211,10 +220,26 @@ export const MemberRegistryModal: React.FC<MemberRegistryModalProps> = ({ userEm
                                         <label className="text-[10px] font-bold text-slate-500 uppercase">Contact d'urgence (Parents / Tuteur)</label>
                                         <input type="text" value={formData.emergencyContact} onChange={e => setFormData({ ...formData, emergencyContact: e.target.value })} placeholder="Nom et Téléphone" className="w-full px-4 py-2 rounded-xl border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:ring-2 focus:ring-indigo-500/30 dark:text-white" />
                                     </div>
-                                    <div className="space-y-1 col-span-2">
-                                        <label className="text-[10px] font-bold text-slate-500 uppercase">Statut au sein de la MDJ</label>
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-bold text-slate-500 uppercase">Statut d'activité</label>
                                         <select value={formData.status} onChange={e => setFormData({ ...formData, status: e.target.value as any })} className="w-full px-4 py-2 rounded-xl border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:ring-2 focus:ring-indigo-500/30 dark:text-white">
                                             {MemberStatusEnum.options.map((o: string) => <option key={o} value={o}>{o}</option>)}
+                                        </select>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-bold text-slate-500 uppercase">Type / Rôle de membre</label>
+                                        <select value={formData.memberType} onChange={e => setFormData({ ...formData, memberType: e.target.value as any })} className="w-full px-4 py-2 rounded-xl border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:ring-2 focus:ring-indigo-500/30 dark:text-white">
+                                            {MemberTypeEnum.options.map((o: string) => <option key={o} value={o}>{o}</option>)}
+                                        </select>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-bold text-slate-500 uppercase">Quartier / École de provenance</label>
+                                        <input type="text" value={formData.schoolOrNeighbourhood || ''} onChange={e => setFormData({ ...formData, schoolOrNeighbourhood: e.target.value })} className="w-full px-4 py-2 rounded-xl border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:ring-2 focus:ring-indigo-500/30 dark:text-white" />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-bold text-slate-500 uppercase">Source de la référence</label>
+                                        <select value={formData.referenceSource || 'Autre'} onChange={e => setFormData({ ...formData, referenceSource: e.target.value as any })} className="w-full px-4 py-2 rounded-xl border border-slate-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm focus:ring-2 focus:ring-indigo-500/30 dark:text-white">
+                                            {MemberReferenceSourceEnum.options.map((o: string) => <option key={o} value={o}>{o}</option>)}
                                         </select>
                                     </div>
                                     <div className="space-y-1 col-span-2">

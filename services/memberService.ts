@@ -1,6 +1,5 @@
 import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, orderBy, limit } from 'firebase/firestore';
 import { db } from './firebaseService';
-import { webDb } from './webFirebase';
 import { Member } from '../types';
 import { MemberSchema } from '../lib/schemas';
 
@@ -10,8 +9,9 @@ const WEB_COLLECTION = 'sync_youth_profiles';
 /**
  * Génère un code d'anonymisation pour un membre (ex: LP-1008)
  */
-export const generateMemberCode = (firstName: string, lastName: string, birthDate: string): string => {
-    const initials = `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase();
+export const generateMemberCode = (firstName: string, lastName: string, birthDate: string, preferredFirstName?: string): string => {
+    const fName = preferredFirstName || firstName;
+    const initials = `${fName.charAt(0)}${lastName.charAt(0)}`.toUpperCase();
     const dateParts = birthDate.split('-'); // YYYY-MM-DD
     if (dateParts.length === 3) {
         const year = dateParts[0].substring(2);
@@ -21,9 +21,6 @@ export const generateMemberCode = (firstName: string, lastName: string, birthDat
     return `${initials}-${Math.floor(Math.random() * 9000) + 1000}`;
 };
 
-/**
- * Mappe un profil utilisateur du site web vers le format Membre du planificateur
- */
 /**
  * Mappe un profil utilisateur du site web vers le format Membre du planificateur
  */
@@ -51,6 +48,7 @@ const mapWebUserToMember = (userData: any, id: string): Member | null => {
     const fullAddress = addr ? `${addr.street || ''}, ${addr.city || ''}, ${addr.postalCode || ''}`.replace(/^, |, $/g, '').trim() : '';
 
     const firstName = userData.firstName || '';
+    const preferredFirstName = userData.preferredFirstName || '';
     const lastName = userData.lastName || '';
 
     // VALIDATION DATE DE NAISSANCE : Éviter l'an 20000 ou dates futures
@@ -70,6 +68,7 @@ const mapWebUserToMember = (userData: any, id: string): Member | null => {
     return {
         id: id,
         firstName,
+        preferredFirstName,
         lastName,
         birthDate,
         gender: 'Préfère ne pas répondre', // Non présent dans UserProfile de base
@@ -81,8 +80,10 @@ const mapWebUserToMember = (userData: any, id: string): Member | null => {
         parentContact: userData.parentEmail || '',
         emergencyContact: emergencyContacts.substring(0, 300),
         notes: `[SÉCURISÉ SITE WEB] Email: ${userData.email || ''}${fullAddress ? ` | Adr: ${fullAddress}` : ''}`,
+        schoolOrNeighbourhood: userData.schoolOrNeighbourhood || '',
+        referenceSource: userData.referenceSource || 'Autre',
         updatedAt: Date.now(),
-        code: generateMemberCode(firstName, lastName, birthDate),
+        code: generateMemberCode(firstName, lastName, birthDate, preferredFirstName),
         isSynced: true
     } as any;
 };
