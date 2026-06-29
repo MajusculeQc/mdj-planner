@@ -61,9 +61,9 @@ export const MemberRegistryModal: React.FC<MemberRegistryModalProps> = ({ userEm
 
     const filteredMembers = members.filter(m =>
         m.firstName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        m.preferredFirstName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (m.preferredFirstName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         m.lastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        m.code?.toLowerCase().includes(searchTerm.toLowerCase())
+        (m.code || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
 
     const youthMembers = filteredMembers
